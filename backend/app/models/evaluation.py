@@ -1,4 +1,8 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
+Dimension = Literal["specificity", "evidence", "relevance", "structure"]
 
 
 class DimensionScore(BaseModel):
@@ -25,7 +29,7 @@ class SessionSummary(BaseModel):
     avg_relevance: float
     avg_structure: float
     avg_overall: float
-    weakest_dimension: str
+    weakest_dimension: Dimension
     top_improvements: list[str] = Field(..., min_length=1, max_length=3)
     full_transcript: str
 
@@ -39,4 +43,4 @@ class Question(BaseModel):
 class QuestionSet(BaseModel):
     company: str
     role: str
-    questions: list[Question]
+    questions: list[Question] = Field(..., min_length=1)

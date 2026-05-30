@@ -1,3 +1,5 @@
+export type Dimension = 'specificity' | 'evidence' | 'relevance' | 'structure'
+
 export interface DimensionScore {
   score: number
   feedback: string
@@ -22,7 +24,7 @@ export interface SessionSummary {
   avg_relevance: number
   avg_structure: number
   avg_overall: number
-  weakest_dimension: string
+  weakest_dimension: Dimension
   top_improvements: string[]
   full_transcript: string
 }
