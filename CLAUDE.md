@@ -79,7 +79,7 @@ These models are also mirrored in `frontend/src/types/index.ts`. Changes to one 
 
 ### LLM calls
 
-All calls go through `services/llm.py`. The module-level `genai.configure()` runs at import time using `settings.gemini_api_key` — if the `.env` is missing, the entire backend fails to import. Model is `gemini-2.0-flash`. Structured outputs use `response_mime_type="application/json"` + `response_schema=<PydanticModel>`.
+All calls go through `services/llm.py`. Uses `google-genai` SDK (not the old `google-generativeai`). A module-level `genai.Client(api_key=settings.gemini_api_key)` is created at import time — missing `.env` fails the import. Model is `gemini-2.0-flash`. Structured outputs use `types.GenerateContentConfig(response_mime_type="application/json", response_schema=<PydanticModel>)`. Embeddings go through `services/rag.py` using `client.models.embed_content()` with `types.EmbedContentConfig(task_type=...)` — separate functions for document and query task types (`_embed_documents`, `_embed_query`).
 
 ### Database
 

@@ -1,11 +1,11 @@
 import json
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from app.config import settings
 from app.models.evaluation import AnswerEvaluation, SessionSummary, QuestionSet
 
-genai.configure(api_key=settings.gemini_api_key)
-
-_flash = genai.GenerativeModel("gemini-2.0-flash")
+_client = genai.Client(api_key=settings.gemini_api_key)
+_MODEL = "gemini-2.0-flash"
 
 
 def clean_transcript(raw: str) -> str:
@@ -15,7 +15,7 @@ def clean_transcript(raw: str) -> str:
         "Return only the cleaned text, no explanation.\n\n"
         f"TRANSCRIPT:\n{raw}"
     )
-    response = _flash.generate_content(prompt)
+    response = _client.models.generate_content(model=_MODEL, contents=prompt)
     return response.text.strip()
 
 
@@ -31,9 +31,10 @@ def evaluate_answer(question: str, transcript_clean: str, context_chunks: list[s
         "For each, give a score and one sentence of feedback. "
         "Also give overall_score (average), key_strength, and key_improvement."
     )
-    response = _flash.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
+    response = _client.models.generate_content(
+        model=_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=AnswerEvaluation,
         ),
@@ -49,9 +50,10 @@ def summarise_session(session_id: int, evaluations: list[AnswerEvaluation]) -> S
         "Return avg scores per dimension, weakest_dimension, top 3 improvements, "
         "and a full_transcript block combining all cleaned answers."
     )
-    response = _flash.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
+    response = _client.models.generate_content(
+        model=_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=SessionSummary,
         ),
@@ -70,9 +72,10 @@ def generate_questions(jd_text: str, context_chunks: list[str]) -> QuestionSet:
         f"JOB DESCRIPTION:\n{jd_text}\n\n"
         "Return a QuestionSet with company, role, and 10 questions each with text, category, target_experience."
     )
-    response = _flash.generate_content(
-        prompt,
-        generation_config=genai.GenerationConfig(
+    response = _client.models.generate_content(
+        model=_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
             response_mime_type="application/json",
             response_schema=QuestionSet,
         ),

@@ -14,9 +14,9 @@
 - Create `backend/.env` from `.env.example` with a real `GEMINI_API_KEY`.
 - Create Python venv, install `backend/requirements.txt`. Pin versions in a lockfile or commit the resolved `pip freeze` output.
 - Confirm `npm install` in `frontend/` succeeded; resolve any peer-dep noise.
-- Smoke-test the key: a one-liner that imports `google.generativeai`, configures with `settings.gemini_api_key`, and lists models (or generates a "ping" completion).
+- Smoke-test the key: a one-liner that creates a `genai.Client` and generates a "ping" completion.
 
-**Validation.** `python -c "from app.config import settings; import google.generativeai as g; g.configure(api_key=settings.gemini_api_key); print(next(iter(g.list_models())).name)"` prints a real model name. `npm run dev` in `frontend/` serves a page (even the placeholder) without errors.
+**Validation.** `python -c "from app.config import settings; from google import genai; c = genai.Client(api_key=settings.gemini_api_key); r = c.models.generate_content(model='gemini-2.0-flash', contents='ping'); print('OK:', r.text[:30])"` prints `OK:` followed by a response. `npm run dev` in `frontend/` serves a page without errors.
 
 **Main risk.** `pydantic-settings` not pinned, `google-genai` SDK renaming (Gemini SDKs have churned). Catch incompatibilities here, not under load.
 
