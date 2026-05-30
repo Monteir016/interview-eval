@@ -8,7 +8,7 @@ class Settings(BaseSettings):
     full_context_path: str = "./FULL_CONTEXT.md"
     rag_top_k: int = 5
 
-    model_config = {"env_file": ".env"}
+    model_config = {"env_file": ".env", "extra": "ignore"}
 
 
 settings = Settings()

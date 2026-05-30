@@ -11,30 +11,33 @@
 **Goal.** Make the toolchain runnable. Nothing AI-related yet.
 
 **Scope.**
-- Create `backend/.env` from `.env.example` with a real `GEMINI_API_KEY`.
+- Create `backend/.env` with `GROQ_API_KEY` (from console.groq.com).
+- Install Ollama (`brew install ollama`) and pull the embedding model: `ollama pull nomic-embed-text`. Confirm `ollama serve` starts and stays running.
 - Create Python venv, install `backend/requirements.txt`. Pin versions in a lockfile or commit the resolved `pip freeze` output.
 - Confirm `npm install` in `frontend/` succeeded; resolve any peer-dep noise.
-- Smoke-test the key: a one-liner that creates a `genai.Client` and generates a "ping" completion.
 
-**Validation.** `python -c "from app.config import settings; from google import genai; c = genai.Client(api_key=settings.gemini_api_key); r = c.models.generate_content(model='gemini-2.0-flash', contents='ping'); print('OK:', r.text[:30])"` prints `OK:` followed by a response. `npm run dev` in `frontend/` serves a page without errors.
+**Validation.**
+- Groq: `python -c "from groq import Groq; from app.config import settings; c = Groq(api_key=settings.groq_api_key); r = c.chat.completions.create(model='llama-3.3-70b-versatile', messages=[{'role':'user','content':'ping'}]); print('OK:', r.choices[0].message.content[:30])"` prints `OK:` followed by text.
+- Ollama: `python -c "import httpx; r = httpx.post('http://localhost:11434/api/embeddings', json={'model':'nomic-embed-text','prompt':'test'}); print('OK: dim =', len(r.json()['embedding']))"` prints `OK: dim = 768`.
+- `npm run dev` in `frontend/` serves a page without errors.
 
-**Main risk.** `pydantic-settings` not pinned, `google-genai` SDK renaming (Gemini SDKs have churned). Catch incompatibilities here, not under load.
+**Main risk.** Ollama not running when the backend starts — `RAGService.__init__` will fail silently if the embed endpoint is down. Verify `ollama serve` is running before starting uvicorn. Groq SDK is stable (OpenAI-compatible); no renaming risk.
 
 ---
 
 ## Phase 1 — Pydantic contracts
 
-**Goal.** Finalize the schemas that Gemini will be asked to return and that the frontend will consume. These are the CV-visible artifact — get them right once.
+**Goal.** Finalize the schemas the LLM will be asked to return and that the frontend will consume. These are the CV-visible artifact — get them right once.
 
 **Scope.**
 - Review `models/evaluation.py`: `DimensionScore`, `AnswerEvaluation`, `SessionSummary`, `Question`, `QuestionSet`.
-- Decide field nullability rules — `response_schema` does not accept arbitrary `Optional`/defaults; every field should be required and typed concretely.
+- Decide field nullability rules — Groq JSON mode requires clean schemas with no nullable fields or complex defaults; every field should be required and typed concretely.
 - Mirror the final shape into `frontend/src/types/index.ts`.
 - Cover construction + validation in `tests/test_evaluation.py` (range bounds on scores, required fields, list length on `top_improvements`).
 
-**Validation.** `pytest backend/tests/test_evaluation.py -q` passes. Manual: feed an `AnswerEvaluation` instance through `.model_json_schema()` and confirm Gemini-compatible (no `anyOf`, no `default`, no `$ref` to non-trivial types).
+**Validation.** `pytest backend/tests/test_evaluation.py -q` passes. Manual: feed an `AnswerEvaluation` instance through `.model_json_schema()` and confirm JSON-mode compatible (no `anyOf`, no `default`, no `$ref` to non-trivial types).
 
-**Main risk.** Locking in a model now that fails Gemini's `response_schema` validator later. Discovering this in Phase 5 means redoing Phase 1 and the frontend types together.
+**Main risk.** Locking in a schema now that Groq's JSON mode rejects later (e.g. nested models with defaults). Discovering this in Phase 5 means redoing Phase 1 and the frontend types together.
 
 ---
 
@@ -60,7 +63,7 @@
 **Scope.**
 - Decide chunking strategy: section-based (split on `##` headings) is more meaningful than word-window for a structured CV doc — reconsider the current word-window approach.
 - Implement `RAGService.index()` as idempotent (upsert, not append; reset on schema change).
-- Implement query path with `task_type="retrieval_query"` and confirm dimensionality matches indexed embeddings.
+- Implement query path via `POST http://localhost:11434/api/embeddings` and confirm dimensionality matches indexed embeddings (`nomic-embed-text` produces 768-dim vectors).
 - A CLI entry point (`python -m app.services.rag index`) is useful and risk-free.
 
 **Validation.** `pytest backend/tests/test_rag.py -q` — the existing assertions (IST query returns education chunk, Lazzo query returns founding experience) must pass. Manually: query "react native frontend" and read the top-3 chunks; they should mention Lazzo's Flutter stack rather than unrelated coursework.
@@ -71,15 +74,15 @@
 
 ## Phase 4 — Transcript cleaning service
 
-**Goal.** First real Gemini integration. Simplest possible — no structured output, no RAG.
+**Goal.** First real Groq integration. Simplest possible — no structured output, no RAG.
 
 **Scope.**
-- `clean_transcript()` in `services/llm.py`: prompt + Gemini Flash call, return string.
+- `clean_transcript()` in `services/llm.py`: prompt + Groq chat completion call (`llama-3.3-70b-versatile`), return string.
 - Tune the prompt to preserve meaning and first-person voice; reject the model's tendency to "improve" beyond cleaning.
 
 **Validation.** Run `clean_transcript()` on a sample with obvious fillers ("um, like, yeah so I, I worked on, you know, this thing at Lazzo") and confirm output: fillers gone, meaning preserved, no invented content. Run on an already-clean transcript and confirm it returns near-identical text (idempotency).
 
-**Main risk.** Over-cleaning. Gemini rewrites in third-person or paraphrases. Bake constraints into the prompt and test both directions (noisy and clean inputs).
+**Main risk.** Over-cleaning. llama-3.3-70b rewrites in third-person or paraphrases. Bake constraints into the prompt and test both directions (noisy and clean inputs).
 
 ---
 
@@ -88,12 +91,12 @@
 **Goal.** End-to-end evaluation working as a blocking call, before SSE complicates debugging.
 
 **Scope.**
-- `evaluate_answer()` calls `RAGService.query(question + transcript)`, formats the prompt with retrieved chunks, calls Gemini with `response_schema=AnswerEvaluation`, parses to Pydantic.
+- `evaluate_answer()` calls `RAGService.query(question + transcript)`, formats the prompt with retrieved chunks, calls Groq with `response_format={"type": "json_object"}`, validates response against `AnswerEvaluation` via `model_validate_json`.
 - Strengthen `tests/test_evaluation.py` with two live-LLM tests: strong answer (concrete metrics, real project names from FULL_CONTEXT) scores ≥ 3.5 average; vague answer scores ≤ 2.5.
 
 **Validation.** `pytest backend/tests/test_evaluation.py -q` — strong/vague threshold assertions pass; all four dimensions populated; `overall_score` ∈ [1.0, 5.0]; `key_strength` and `key_improvement` non-empty. Inspect a real evaluation: feedback should cite something from FULL_CONTEXT (e.g., "Lazzo" or "IST"), not generic advice.
 
-**Main risk.** Gemini ignores `response_schema` on complex nested models. If `DimensionScore` nesting breaks, flatten to `specificity_score: int, specificity_feedback: str, ...` and reshape on the way out. Decide this before wiring streaming on top.
+**Main risk.** Groq JSON mode returns structurally valid JSON that fails Pydantic validation (wrong field names, scores out of range). Prompt must include the exact schema as a JSON example, not just a description. Decide prompt format before wiring streaming on top.
 
 ---
 
@@ -103,12 +106,12 @@
 
 **Scope.**
 - Wrap Phase 5's evaluation in `StreamingResponse` from `api/evaluation.py`.
-- Decide the streaming unit: full evaluation computed then yielded field-by-field (cosmetic stream) vs Gemini streaming generation parsed incrementally. Lean toward the second for real CV signal — the first is theater.
+- Decide the streaming unit: full evaluation computed then yielded field-by-field (cosmetic stream) vs Groq `stream=True` token chunks accumulated and parsed incrementally. Groq JSON mode with streaming accumulates tokens before a valid JSON object can be parsed — cosmetic streaming is the practical approach; document it honestly.
 - Disable response buffering (uvicorn flag or response headers like `X-Accel-Buffering: no`).
 
 **Validation.** `curl -N http://localhost:8000/evaluation/answer -X POST -H 'Content-Type: application/json' -d '{"question":"...","transcript_clean":"..."}'` — observe `data:` lines arriving with visible time gaps, terminated by `[DONE]`. Field arrival should be monotonic over wall-clock time, not bursty at the end.
 
-**Main risk.** Fake streaming. If Gemini's JSON-schema mode buffers the whole response before returning, true field-by-field streaming may be impossible — accept this honestly and document it, or switch to free-text streaming + a final parse.
+**Main risk.** Fake streaming is unavoidable with JSON mode. Accept it and verify the UI experience is still fluid — fields should appear with small gaps, not all at once after a long pause.
 
 ---
 
@@ -179,13 +182,13 @@
 **Goal.** End-of-session summary that's actually useful — paste-into-Claude transcript block plus structured aggregates.
 
 **Scope.**
-- `summarise_session()`: compute averages locally (don't trust the LLM for arithmetic), call Gemini only for `weakest_dimension`, `top_improvements`, and assembling `full_transcript`.
+- `summarise_session()`: compute averages locally (don't trust the LLM for arithmetic), call Groq only for `weakest_dimension`, `top_improvements`, and assembling `full_transcript`.
 - `POST /evaluation/session/summary` endpoint.
 - "Session complete" view: dimension averages, weakest dimension highlighted, top-3 improvement bullets, full transcript with copy-to-clipboard.
 
 **Validation.** Finish a session in the browser. Verify the displayed averages match what you'd compute by hand from the saved answer rows. Click "copy transcript," paste into a scratch buffer, confirm it's well-formed (question/answer pairs, no JSON noise).
 
-**Main risk.** Asking the LLM to do math. Even Flash will occasionally miscompute averages over 5+ items. Compute aggregates in Python; let the LLM judge qualitative things only.
+**Main risk.** Asking the LLM to do math. Even llama-3.3-70b will occasionally miscompute averages over 5+ items. Compute aggregates in Python; let the LLM judge qualitative things only.
 
 ---
 
@@ -196,7 +199,7 @@
 **Scope.**
 - Pick the search provider (Tavily / Serper / Brave) and store its key in `.env`.
 - Declare two function tools: `fetch_jd(url) -> str` and `search_company(query) -> list[result]`.
-- Manual loop: send prompt + tool declarations → if response has `function_call`, execute the function locally, return `function_response`, repeat → when response is text, parse as `QuestionSet`.
+- Manual loop using Groq's OpenAI-compatible tool calling: send prompt + `tools=[...]` → if response has `tool_calls`, execute locally, append `tool` role message with result, repeat → when response has no `tool_calls`, parse content as `QuestionSet` via JSON mode.
 - Cap loop iterations (e.g. 5) to prevent runaway.
 - `POST /questions/generate` returns the `QuestionSet`; UI lets the user save the JSON.
 
@@ -228,7 +231,7 @@
 - Consolidate the assertions written during Phases 1, 3, 5: model validation, RAG retrieval correctness, live-LLM strong-vs-vague scoring.
 - Mark live-LLM tests (Phases 4, 5) with a `@pytest.mark.live` marker; skip by default; run on push.
 - Pre-push git hook (or GitHub Actions on push) that runs the full suite including `live`.
-- Document threshold rationale: scoring tests use generous margins (≥3.5 / ≤2.5) because Gemini is non-deterministic.
+- Document threshold rationale: scoring tests use generous margins (≥3.5 / ≤2.5) because the LLM is non-deterministic.
 
 **Validation.** `pytest -q` exits 0 on a clean checkout. Intentionally weaken a prompt (e.g. remove "be specific" from the evaluation prompt), confirm the strong-vs-vague test catches the regression. Push attempt with a broken test is rejected by the hook.
 
@@ -243,5 +246,3 @@ Per GUIDELINES — these stay in Claude chat, not in the tool:
 - Cover letter generation
 - Deep qualitative feedback on answers
 - Strategic fit judgment
-
-If the Gemini Live Audio stretch (better transcription than Web Speech API) is taken on, it slots after Phase 9 as a parallel transcription mode, gated by a toggle. Do not start it until the Web Speech API path is shipped and used.
