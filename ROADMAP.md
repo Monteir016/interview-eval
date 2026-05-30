@@ -18,7 +18,7 @@
 
 **Validation.** `python -c "from app.config import settings; import google.generativeai as g; g.configure(api_key=settings.gemini_api_key); print(next(iter(g.list_models())).name)"` prints a real model name. `npm run dev` in `frontend/` serves a page (even the placeholder) without errors.
 
-**Main risk.** `pydantic-settings` not pinned, `google-generativeai` SDK renaming (Gemini SDKs have churned). Catch incompatibilities here, not under load.
+**Main risk.** `pydantic-settings` not pinned, `google-genai` SDK renaming (Gemini SDKs have churned). Catch incompatibilities here, not under load.
 
 ---
 
