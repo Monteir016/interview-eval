@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+google-generativeai
+chromadb
+pydantic
+pydantic-settings
+python-dotenv
+aiosqlite
+httpx
+pytest
+pytest-asyncio
