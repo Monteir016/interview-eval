@@ -7,11 +7,22 @@ interface UseSpeechReturn {
   stop: () => void
   reset: () => void
   supported: boolean
+  error: string | null
+}
+
+const ERROR_MESSAGES: Record<string, string> = {
+  'not-allowed': 'Microphone permission denied. Allow it in the address bar and try again.',
+  'service-not-allowed': 'Speech recognition blocked by browser settings.',
+  'network': 'Network error reaching the speech service. Check your connection.',
+  'audio-capture': 'No microphone detected.',
+  'aborted': '',
+  'no-speech': '',
 }
 
 export function useSpeech(): UseSpeechReturn {
   const [transcript, setTranscript] = useState('')
   const [isListening, setIsListening] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
 
   const supported =
@@ -21,6 +32,7 @@ export function useSpeech(): UseSpeechReturn {
   useEffect(() => {
     if (!supported) return
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition
+    if (!SR) return
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
@@ -32,23 +44,45 @@ export function useSpeech(): UseSpeechReturn {
       }
       setTranscript(full)
     }
+    rec.onstart = () => setIsListening(true)
     rec.onend = () => setIsListening(false)
+    rec.onerror = (e: SpeechRecognitionErrorEvent) => {
+      const message = ERROR_MESSAGES[e.error]
+      if (message === undefined) {
+        setError(`Speech recognition error: ${e.error}`)
+      } else if (message) {
+        setError(message)
+      }
+      setIsListening(false)
+    }
     recognitionRef.current = rec
+    return () => {
+      rec.onresult = null
+      rec.onstart = null
+      rec.onend = null
+      rec.onerror = null
+      try { rec.abort() } catch { /* not started */ }
+    }
   }, [supported])
 
   const start = useCallback(() => {
-    recognitionRef.current?.start()
-    setIsListening(true)
+    if (!recognitionRef.current) return
+    setError(null)
+    try {
+      recognitionRef.current.start()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not start recording')
+    }
   }, [])
 
   const stop = useCallback(() => {
     recognitionRef.current?.stop()
-    setIsListening(false)
   }, [])
 
   const reset = useCallback(() => {
     setTranscript('')
+    setError(null)
   }, [])
 
-  return { transcript, isListening, start, stop, reset, supported }
+  return { transcript, isListening, start, stop, reset, supported, error }
 }

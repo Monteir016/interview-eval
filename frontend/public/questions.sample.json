@@ -1,0 +1,12 @@
+[
+  {
+    "text": "Tell me about a time you designed a system feature from scratch.",
+    "category": "system-design",
+    "target_experience": "Lazzo real-time photo upload"
+  },
+  {
+    "text": "Walk me through a technical decision you made under uncertainty.",
+    "category": "behavioural",
+    "target_experience": "Architecture choices at Lazzo"
+  }
+]

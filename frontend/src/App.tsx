@@ -15,15 +15,36 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<Partial<AnswerEvaluation>>({})
   const [streaming, setStreaming] = useState(false)
   const [rawTranscript, setRawTranscript] = useState('')
+  const [loadError, setLoadError] = useState<string | null>(null)
 
-  const { transcript, isListening, start, stop, reset, supported } = useSpeech()
+  const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
 
   async function loadQuestions(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
-    const text = await file.text()
-    const data = JSON.parse(text)
-    setQuestions(Array.isArray(data) ? data : data.questions)
+    setLoadError(null)
+    try {
+      const text = await file.text()
+      const data = JSON.parse(text)
+      const list: unknown = Array.isArray(data) ? data : data?.questions
+      if (!Array.isArray(list) || list.length === 0) {
+        throw new Error('Expected an array of questions or a QuestionSet with `questions`.')
+      }
+      const valid = list.every(
+        (q): q is Question =>
+          typeof q === 'object' && q !== null &&
+          typeof (q as Question).text === 'string' &&
+          typeof (q as Question).category === 'string' &&
+          typeof (q as Question).target_experience === 'string'
+      )
+      if (!valid) {
+        throw new Error('Each question needs `text`, `category`, and `target_experience` strings.')
+      }
+      setQuestions(list)
+    } catch (err) {
+      setQuestions([])
+      setLoadError(err instanceof Error ? err.message : 'Could not parse JSON.')
+    }
   }
 
   async function startSession() {
@@ -74,18 +95,30 @@ export default function App() {
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 w-full max-w-md space-y-6">
           <h1 className="text-2xl font-bold text-gray-900">Prepwise</h1>
-          <p className="text-gray-500 text-sm">Load a question set JSON to begin.</p>
-          <input type="file" accept=".json" onChange={loadQuestions} className="text-sm" />
-          {questions.length > 0 && (
-            <p className="text-sm text-green-600">{questions.length} questions loaded</p>
+          {!supported ? (
+            <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700">
+              <p className="font-semibold mb-1">Browser not supported</p>
+              <p>Prepwise needs the Web Speech API. Please open this page in Chrome on desktop.</p>
+            </div>
+          ) : (
+            <>
+              <p className="text-gray-500 text-sm">Load a question set JSON to begin.</p>
+              <input type="file" accept=".json" onChange={loadQuestions} className="text-sm" />
+              {loadError && (
+                <p className="text-sm text-red-600">{loadError}</p>
+              )}
+              {questions.length > 0 && (
+                <p className="text-sm text-green-600">{questions.length} questions loaded</p>
+              )}
+              <button
+                onClick={startSession}
+                disabled={questions.length === 0}
+                className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
+              >
+                Start session
+              </button>
+            </>
           )}
-          <button
-            onClick={startSession}
-            disabled={questions.length === 0}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
-          >
-            Start session
-          </button>
         </div>
       </div>
     )
@@ -125,8 +158,10 @@ export default function App() {
           <p className="text-gray-900 font-medium">{currentQuestion.text}</p>
         </div>
 
-        {!supported && (
-          <p className="text-sm text-red-500">Web Speech API not supported in this browser.</p>
+        {speechError && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            {speechError}
+          </p>
         )}
 
         <div className="flex flex-col items-center gap-4">
