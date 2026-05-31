@@ -7,8 +7,14 @@ from app.config import settings
 COLLECTION_NAME = "full_context"
 MAX_CHUNK_WORDS = 600
 WORD_WINDOW_OVERLAP = 100
-OLLAMA_EMBED_URL = "http://localhost:11434/api/embeddings"
-EMBED_MODEL = "nomic-embed-text"
+
+# Nomic API
+_NOMIC_EMBED_URL = "https://api-atlas.nomic.ai/v1/embedding/text"
+_NOMIC_MODEL = "nomic-embed-text-v1.5"
+
+# Ollama fallback (local dev without NOMIC_API_KEY)
+_OLLAMA_EMBED_URL = "http://localhost:11434/api/embeddings"
+_OLLAMA_MODEL = "nomic-embed-text"
 
 
 def _chunk_sections(text: str, max_words: int = MAX_CHUNK_WORDS) -> list[str]:
@@ -49,14 +55,31 @@ def _chunk_sections(text: str, max_words: int = MAX_CHUNK_WORDS) -> list[str]:
     return final
 
 
-def _embed(text: str) -> list[float]:
-    r = httpx.post(OLLAMA_EMBED_URL, json={"model": EMBED_MODEL, "prompt": text}, timeout=30.0)
+def _embed_nomic(texts: list[str], task_type: str) -> list[list[float]]:
+    r = httpx.post(
+        _NOMIC_EMBED_URL,
+        headers={"Authorization": f"Bearer {settings.nomic_api_key}"},
+        json={"texts": texts, "model": _NOMIC_MODEL, "task_type": task_type},
+        timeout=60.0,
+    )
     r.raise_for_status()
-    return r.json()["embedding"]
+    return r.json()["embeddings"]
 
 
-def _embed_batch(texts: list[str]) -> list[list[float]]:
-    return [_embed(t) for t in texts]
+def _embed_batch(texts: list[str], task_type: str = "search_document") -> list[list[float]]:
+    if settings.nomic_api_key:
+        return _embed_nomic(texts, task_type)
+    # Ollama fallback for local dev (no task_type concept — same model, different endpoint)
+    results = []
+    for t in texts:
+        r = httpx.post(_OLLAMA_EMBED_URL, json={"model": _OLLAMA_MODEL, "prompt": t}, timeout=30.0)
+        r.raise_for_status()
+        results.append(r.json()["embedding"])
+    return results
+
+
+def _embed(text: str, task_type: str = "search_query") -> list[float]:
+    return _embed_batch([text], task_type)[0]
 
 
 class RAGService:
@@ -76,14 +99,14 @@ class RAGService:
         if existing:
             self._collection.delete(ids=existing)
 
-        embeddings = _embed_batch(chunks)
+        embeddings = _embed_batch(chunks, task_type="search_document")
         ids = [f"chunk_{i}" for i in range(len(chunks))]
         self._collection.add(ids=ids, embeddings=embeddings, documents=chunks)
         return len(chunks)
 
     def query(self, query: str, k: int | None = None) -> list[str]:
         k = k or settings.rag_top_k
-        query_embedding = _embed(query)
+        query_embedding = _embed(query, task_type="search_query")
         results = self._collection.query(
             query_embeddings=[query_embedding],
             n_results=k,

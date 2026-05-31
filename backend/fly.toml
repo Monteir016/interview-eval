@@ -1,0 +1,43 @@
+# Deploy from backend/: fly deploy
+# First-time setup:
+#   fly apps create prepwise-api   (or any name — update app= below)
+#   fly volumes create prepwise_data --size 1 --region cdg
+#
+#   REQUIRED secrets (app won't work without all four):
+#   fly secrets set GROQ_API_KEY=...
+#   fly secrets set TAVILY_API_KEY=...
+#   fly secrets set NOMIC_API_KEY=...
+#   fly secrets set ALLOWED_ORIGINS=https://YOUR-APP.vercel.app
+#   ^ ALLOWED_ORIGINS must be a secret, not an [env] var — it contains your Vercel
+#     URL which isn't known at commit time. Without it, every browser request from
+#     Vercel is rejected by CORS. Set it before the first deploy.
+#
+#   fly sftp shell   # then: put /path/to/FULL_CONTEXT.md /data/FULL_CONTEXT.md
+
+app = "prepwise-api"
+primary_region = "cdg"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  CHROMA_PERSIST_PATH = "/data/chroma_db"
+  SQLITE_PATH         = "/data/prepwise.db"
+  FULL_CONTEXT_PATH   = "/data/FULL_CONTEXT.md"
+  PRIVATE_PATH        = "/data"
+  RAG_TOP_K           = "5"
+
+[http_service]
+  internal_port       = 8000
+  force_https         = true
+  auto_stop_machines  = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "256mb"
+
+[[mounts]]
+  source      = "prepwise_data"
+  destination = "/data"
