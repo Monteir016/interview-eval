@@ -5,7 +5,7 @@ import { Sparkline } from './Sparkline'
 
 interface Props {
   onBack: () => void
-  onSelectSession: (id: number) => void
+  onSelectSession: (id: number, name: string | null) => void
 }
 
 function formatDate(s: string) {
@@ -127,11 +127,9 @@ export function HistoryView({ onBack, onSelectSession }: Props) {
                       className="flex items-center gap-1.5 text-left group/name"
                       title="Edit session name"
                     >
-                      {s.name ? (
-                        <span className="text-sm font-semibold text-gray-900">{s.name}</span>
-                      ) : (
-                        <span className="text-sm text-gray-400 italic">Untitled session</span>
-                      )}
+                      <span className="text-sm font-semibold text-gray-900">
+                        {s.name ?? `Session #${s.id}`}
+                      </span>
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-3 h-3 text-gray-300 opacity-0 group-hover/name:opacity-100 transition-opacity">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
                       </svg>
@@ -141,7 +139,7 @@ export function HistoryView({ onBack, onSelectSession }: Props) {
 
                 {/* Main content row — clickable to view detail */}
                 <button
-                  onClick={() => onSelectSession(s.id)}
+                  onClick={() => onSelectSession(s.id, s.name)}
                   className="w-full px-5 pb-4 pt-1 text-left"
                 >
                   <div className="flex items-center justify-between">

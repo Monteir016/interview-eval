@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { AnswerEvaluation, Question, QuestionSet, SessionSummary } from './types'
 import { useSpeech } from './hooks/useSpeech'
 import { EvaluationCard } from './components/EvaluationCard'
@@ -27,6 +27,7 @@ export default function App() {
   const [jdUrl, setJdUrl] = useState('')
   const [generating, setGenerating] = useState(false)
   const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
+  const [selectedSessionName, setSelectedSessionName] = useState<string | null>(null)
   const [generatingStep, setGeneratingStep] = useState(0)
   const [generateAbort, setGenerateAbort] = useState<AbortController | null>(null)
   const [setupStep, setSetupStep] = useState<'choose' | 'manual' | 'generated'>('choose')
@@ -34,6 +35,7 @@ export default function App() {
   const [questionCount, setQuestionCount] = useState(10)
   const [copied, setCopied] = useState(false)
   const [recordElapsed, setRecordElapsed] = useState(0)
+  const recordStartedAtRef = useRef(0)
   const [showTranscript, setShowTranscript] = useState(true)
   const [answersLog, setAnswersLog] = useState<Array<{ question: string; transcript: string; evaluated: boolean }>>([])
   const [submitting, setSubmitting] = useState(false)
@@ -57,12 +59,10 @@ export default function App() {
 
   useEffect(() => {
     if (!isListening) return
-    const startedAt = Date.now() - recordElapsed * 1000
     const id = setInterval(() => {
-      setRecordElapsed(Math.floor((Date.now() - startedAt) / 1000))
+      setRecordElapsed(Math.floor((Date.now() - recordStartedAtRef.current) / 1000))
     }, 250)
     return () => clearInterval(id)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isListening])
 
   function formatTime(s: number) {
@@ -76,6 +76,7 @@ export default function App() {
     setManualTranscript(null)
     setEditingTranscript(false)
     setRecordElapsed(0)
+    recordStartedAtRef.current = Date.now()
     start()
   }
 
@@ -84,6 +85,7 @@ export default function App() {
     setManualTranscript(null)
     setEditingTranscript(false)
     setRecordElapsed(0)
+    recordStartedAtRef.current = Date.now()
     start()
   }
 
@@ -188,7 +190,10 @@ export default function App() {
     setNetworkError(null)
     try {
       const id = await createSession()
+      const autoName = `Session #${id}`
       setSessionId(id)
+      setSessionName(autoName)
+      patchSession(id, autoName).catch(() => {/* best effort */})
       setQIndex(0)
       setView('session')
     } catch (err) {
@@ -292,9 +297,20 @@ export default function App() {
 
   if (view === 'history') {
     if (selectedSessionId !== null) {
-      return <SessionDetail sessionId={selectedSessionId} onBack={() => setSelectedSessionId(null)} />
+      return (
+        <SessionDetail
+          sessionId={selectedSessionId}
+          sessionName={selectedSessionName ?? `Session #${selectedSessionId}`}
+          onBack={() => setSelectedSessionId(null)}
+        />
+      )
     }
-    return <HistoryView onBack={() => setView('setup')} onSelectSession={setSelectedSessionId} />
+    return (
+      <HistoryView
+        onBack={() => setView('setup')}
+        onSelectSession={(id, name) => { setSelectedSessionId(id); setSelectedSessionName(name) }}
+      />
+    )
   }
 
   if (view === 'setup') {
