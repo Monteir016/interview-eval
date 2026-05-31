@@ -21,6 +21,18 @@ class SummariseRequest(BaseModel):
     evaluations: list[AnswerEvaluation]
 
 
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "X-Accel-Buffering": "no",
+    "Connection": "keep-alive",
+}
+
+# Delay between each yielded field — cosmetic streaming (full eval computed first,
+# then fields emitted progressively). True token-level streaming isn't viable with
+# Groq JSON mode since the JSON object can't be parsed until the stream is complete.
+_FIELD_DELAY = 0.05
+
+
 @router.post("/answer")
 async def evaluate(body: EvaluateRequest) -> StreamingResponse:
     query = f"{body.question} {body.transcript_clean}"
@@ -31,10 +43,10 @@ async def evaluate(body: EvaluateRequest) -> StreamingResponse:
         data = evaluation.model_dump()
         for key, value in data.items():
             yield f"data: {json.dumps({key: value})}\n\n"
-            await asyncio.sleep(0)
+            await asyncio.sleep(_FIELD_DELAY)
         yield "data: [DONE]\n\n"
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return StreamingResponse(stream(), media_type="text/event-stream", headers=_SSE_HEADERS)
 
 
 @router.post("/session/summary", response_model=SessionSummary)
