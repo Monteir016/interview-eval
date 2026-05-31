@@ -5,8 +5,13 @@ CREATE_SESSIONS = """
 CREATE TABLE IF NOT EXISTS sessions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    question_set TEXT
+    question_set TEXT,
+    name TEXT
 )
+"""
+
+MIGRATE_SESSIONS_NAME = """
+ALTER TABLE sessions ADD COLUMN name TEXT
 """
 
 CREATE_ANSWERS = """
@@ -42,4 +47,9 @@ async def init_db() -> None:
         await db.execute(CREATE_SESSIONS)
         await db.execute(CREATE_ANSWERS)
         await db.execute(CREATE_IDX_ANSWERS_SESSION)
+        # idempotent migration for existing DBs
+        try:
+            await db.execute(MIGRATE_SESSIONS_NAME)
+        except Exception:
+            pass
         await db.commit()

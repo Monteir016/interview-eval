@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listSessions, deleteSession } from '../api/client'
+import { listSessions, deleteSession, patchSession } from '../api/client'
 import type { SessionListItem } from '../types'
 import { Sparkline } from './Sparkline'
 
@@ -19,6 +19,8 @@ export function HistoryView({ onBack, onSelectSession }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [confirmId, setConfirmId] = useState<number | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [editingNameId, setEditingNameId] = useState<number | null>(null)
+  const [editingNameValue, setEditingNameValue] = useState('')
 
   useEffect(() => {
     listSessions()
@@ -38,6 +40,15 @@ export function HistoryView({ onBack, onSelectSession }: Props) {
       setDeleting(false)
       setConfirmId(null)
     }
+  }
+
+  async function saveSessionName(id: number, name: string) {
+    const trimmed = name.trim() || null
+    try {
+      await patchSession(id, trimmed)
+      setSessions(prev => prev.map(s => s.id === id ? { ...s, name: trimmed } : s))
+    } catch { /* ignore */ }
+    setEditingNameId(null)
   }
 
   const trendScores = [...sessions]
@@ -91,26 +102,66 @@ export function HistoryView({ onBack, onSelectSession }: Props) {
         <div className="space-y-3">
           {sessions.map((s) => (
             <div key={s.id} className="relative group">
-              <button
-                onClick={() => onSelectSession(s.id)}
-                className="w-full bg-white rounded-xl border border-gray-200 p-5 shadow-sm text-left hover:border-indigo-200 transition-colors"
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">{formatDate(s.created_at)}</p>
-                    <p className="text-xs text-gray-500 mt-0.5">
-                      {s.answer_count}{' '}
-                      {s.answer_count === 1 ? 'answer' : 'answers'}
-                    </p>
-                  </div>
-                  <div className="text-right pr-8">
-                    <p className="text-2xl font-bold text-indigo-600">
-                      {s.avg_overall != null ? s.avg_overall.toFixed(1) : '—'}
-                    </p>
-                    <p className="text-xs text-gray-400">/ 5</p>
-                  </div>
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden hover:border-indigo-200 transition-colors">
+                {/* Name row */}
+                <div
+                  className="px-5 pt-4 pb-1 flex items-center gap-2"
+                  onClick={e => e.stopPropagation()}
+                >
+                  {editingNameId === s.id ? (
+                    <input
+                      autoFocus
+                      value={editingNameValue}
+                      onChange={e => setEditingNameValue(e.target.value)}
+                      onBlur={() => saveSessionName(s.id, editingNameValue)}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') e.currentTarget.blur()
+                        if (e.key === 'Escape') setEditingNameId(null)
+                      }}
+                      placeholder="Session name…"
+                      className="flex-1 text-sm font-medium text-gray-900 bg-transparent border-b border-indigo-300 focus:outline-none pb-0.5"
+                    />
+                  ) : (
+                    <button
+                      onClick={() => { setEditingNameValue(s.name ?? ''); setEditingNameId(s.id) }}
+                      className="flex items-center gap-1.5 text-left group/name"
+                      title="Edit session name"
+                    >
+                      {s.name ? (
+                        <span className="text-sm font-semibold text-gray-900">{s.name}</span>
+                      ) : (
+                        <span className="text-sm text-gray-400 italic">Untitled session</span>
+                      )}
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-3 h-3 text-gray-300 opacity-0 group-hover/name:opacity-100 transition-opacity">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931z" />
+                      </svg>
+                    </button>
+                  )}
                 </div>
-              </button>
+
+                {/* Main content row — clickable to view detail */}
+                <button
+                  onClick={() => onSelectSession(s.id)}
+                  className="w-full px-5 pb-4 pt-1 text-left"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-xs text-gray-500">{formatDate(s.created_at)}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {s.answer_count}{' '}
+                        {s.answer_count === 1 ? 'answer' : 'answers'}
+                      </p>
+                    </div>
+                    <div className="text-right pr-8">
+                      <p className="text-2xl font-bold text-indigo-600">
+                        {s.avg_overall != null ? s.avg_overall.toFixed(1) : '—'}
+                      </p>
+                      <p className="text-xs text-gray-400">/ 5</p>
+                    </div>
+                  </div>
+                </button>
+              </div>
+
               <button
                 onClick={(e) => { e.stopPropagation(); setConfirmId(s.id) }}
                 aria-label="Delete session"

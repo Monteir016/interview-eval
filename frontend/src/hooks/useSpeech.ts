@@ -30,9 +30,31 @@ export function useSpeech(): UseSpeechReturn {
     ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)
 
   useEffect(() => {
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.onresult = null
+        recognitionRef.current.onstart = null
+        recognitionRef.current.onend = null
+        recognitionRef.current.onerror = null
+        try { recognitionRef.current.abort() } catch { /* not started */ }
+      }
+    }
+  }, [])
+
+  const start = useCallback(() => {
     if (!supported) return
     const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition
     if (!SR) return
+
+    // Tear down any existing instance so results buffer starts fresh
+    if (recognitionRef.current) {
+      recognitionRef.current.onresult = null
+      recognitionRef.current.onstart = null
+      recognitionRef.current.onend = null
+      recognitionRef.current.onerror = null
+      try { recognitionRef.current.abort() } catch { /* ignore */ }
+    }
+
     const rec = new SR()
     rec.continuous = true
     rec.interimResults = true
@@ -55,25 +77,15 @@ export function useSpeech(): UseSpeechReturn {
       }
       setIsListening(false)
     }
-    recognitionRef.current = rec
-    return () => {
-      rec.onresult = null
-      rec.onstart = null
-      rec.onend = null
-      rec.onerror = null
-      try { rec.abort() } catch { /* not started */ }
-    }
-  }, [supported])
 
-  const start = useCallback(() => {
-    if (!recognitionRef.current) return
+    recognitionRef.current = rec
     setError(null)
     try {
-      recognitionRef.current.start()
+      rec.start()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not start recording')
     }
-  }, [])
+  }, [supported])
 
   const stop = useCallback(() => {
     recognitionRef.current?.stop()

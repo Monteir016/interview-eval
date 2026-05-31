@@ -75,7 +75,7 @@ export async function saveAnswer(payload: {
   question: string
   transcript_raw: string
   transcript_clean: string
-  evaluation_json: string
+  evaluation_json: string | null
 }): Promise<number> {
   const res = await checkOk(
     await fetch(`${BASE}/sessions/answers`, {
@@ -121,6 +121,17 @@ export async function generateQuestions(
   return res.json()
 }
 
+export async function patchSession(session_id: number, name: string | null): Promise<void> {
+  await checkOk(
+    await fetch(`${BASE}/sessions/${session_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }),
+    'patchSession'
+  )
+}
+
 export async function deleteSession(session_id: number): Promise<void> {
   await checkOk(
     await fetch(`${BASE}/sessions/${session_id}`, { method: 'DELETE' }),
@@ -150,11 +161,13 @@ export async function getSessionAnswers(
       id: r.id as number,
       session_id: r.session_id as number,
       question: r.question as string,
-      specificity: r.specificity as number,
-      evidence: r.evidence as number,
-      relevance: r.relevance as number,
-      structure: r.structure as number,
-      overall_score: r.overall_score as number,
+      transcript_raw: (r.transcript_raw as string | null) ?? null,
+      transcript_clean: (r.transcript_clean as string | null) ?? null,
+      specificity: (r.specificity as number | null) ?? null,
+      evidence: (r.evidence as number | null) ?? null,
+      relevance: (r.relevance as number | null) ?? null,
+      structure: (r.structure as number | null) ?? null,
+      overall_score: (r.overall_score as number | null) ?? null,
       evaluation,
       created_at: r.created_at as string,
     }

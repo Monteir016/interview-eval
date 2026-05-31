@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import type { AnswerEvaluation, Question, QuestionSet, SessionSummary } from './types'
 import { useSpeech } from './hooks/useSpeech'
-import { RecordButton } from './components/RecordButton'
 import { EvaluationCard } from './components/EvaluationCard'
 import { HistoryView } from './components/HistoryView'
 import { SessionDetail } from './components/SessionDetail'
-import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions } from './api/client'
+import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions, patchSession } from './api/client'
 
 type View = 'setup' | 'session' | 'done' | 'history'
 
@@ -34,6 +33,18 @@ export default function App() {
   const [manualText, setManualText] = useState('')
   const [questionCount, setQuestionCount] = useState(10)
   const [copied, setCopied] = useState(false)
+  const [recordElapsed, setRecordElapsed] = useState(0)
+  const [showTranscript, setShowTranscript] = useState(true)
+  const [answersLog, setAnswersLog] = useState<Array<{ question: string; transcript: string; evaluated: boolean }>>([])
+  const [submitting, setSubmitting] = useState(false)
+  const [copiedAnswers, setCopiedAnswers] = useState(false)
+  const [sessionName, setSessionName] = useState('')
+  const [sessionNameSaving, setSessionNameSaving] = useState(false)
+  const [editingTranscript, setEditingTranscript] = useState(false)
+  const [editTranscriptValue, setEditTranscriptValue] = useState('')
+  const [manualTranscript, setManualTranscript] = useState<string | null>(null)
+  const [editingAnswerIndex, setEditingAnswerIndex] = useState<number | null>(null)
+  const [editAnswerValue, setEditAnswerValue] = useState('')
 
   useEffect(() => {
     if (!generating) return
@@ -42,6 +53,44 @@ export default function App() {
   }, [generating])
 
   const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
+  const effectiveTranscript = manualTranscript ?? transcript
+
+  useEffect(() => {
+    if (!isListening) return
+    const startedAt = Date.now() - recordElapsed * 1000
+    const id = setInterval(() => {
+      setRecordElapsed(Math.floor((Date.now() - startedAt) / 1000))
+    }, 250)
+    return () => clearInterval(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isListening])
+
+  function formatTime(s: number) {
+    const m = Math.floor(s / 60)
+    const r = s % 60
+    return `${String(m).padStart(2, '0')}:${String(r).padStart(2, '0')}`
+  }
+
+  function handleStartRecording() {
+    reset()
+    setManualTranscript(null)
+    setEditingTranscript(false)
+    setRecordElapsed(0)
+    start()
+  }
+
+  function handleRestartRecording() {
+    reset()
+    setManualTranscript(null)
+    setEditingTranscript(false)
+    setRecordElapsed(0)
+    start()
+  }
+
+  function handleSkipQuestion() {
+    if (isListening) stop()
+    goToNextOrFinish()
+  }
 
   function parseManualText(text: string): Question[] {
     const entries = text
@@ -147,12 +196,25 @@ export default function App() {
     }
   }
 
-  async function submitAnswer() {
-    if (!transcript || sessionId === null) return
+  async function finishSession() {
+    setView('done')
+    if (evaluationsList.length === 0) return
+    setNetworkError(null)
+    setSummaryLoading(true)
+    try {
+      const s = await fetchSessionSummary(sessionId!, evaluationsList)
+      setSummary(s)
+    } catch (err) {
+      setNetworkError(err instanceof Error ? err.message : 'Could not load summary.')
+    } finally {
+      setSummaryLoading(false)
+    }
+  }
+
+  async function evaluateAnswer() {
+    if (!effectiveTranscript || sessionId === null) return
     const question = questions[qIndex]
-    // Capture raw transcript immediately — state update is batched and
-    // rawTranscript from state would still be stale when saveAnswer runs.
-    const raw = transcript
+    const raw = effectiveTranscript
     stop()
     setNetworkError(null)
 
@@ -177,6 +239,7 @@ export default function App() {
         evaluation_json: JSON.stringify(accumulated),
       })
       setEvaluationsList(prev => [...prev, accumulated as AnswerEvaluation])
+      setAnswersLog(prev => [...prev, { question: question.text, transcript: clean, evaluated: true }])
       setSaving(false)
     } catch (err) {
       setStreaming(false)
@@ -185,24 +248,46 @@ export default function App() {
     }
   }
 
+  async function submitWithoutEval() {
+    if (!effectiveTranscript || sessionId === null) return
+    const question = questions[qIndex]
+    const raw = effectiveTranscript
+    if (isListening) stop()
+    setSubmitting(true)
+    setNetworkError(null)
+    setAnswersLog(prev => [...prev, { question: question.text, transcript: raw, evaluated: false }])
+    try {
+      await saveAnswer({
+        session_id: sessionId,
+        question: question.text,
+        transcript_raw: raw,
+        transcript_clean: raw,
+        evaluation_json: null,
+      })
+    } catch (err) {
+      setNetworkError(err instanceof Error ? err.message : 'Could not save answer.')
+    } finally {
+      setSubmitting(false)
+      goToNextOrFinish()
+    }
+  }
+
+  function goToNextOrFinish() {
+    setEvaluation({})
+    reset()
+    setManualTranscript(null)
+    setEditingTranscript(false)
+    setRecordElapsed(0)
+    if (qIndex + 1 >= questions.length) {
+      finishSession()
+    } else {
+      setQIndex(i => i + 1)
+    }
+  }
+
   async function nextQuestion() {
     setNetworkError(null)
-    if (qIndex + 1 >= questions.length) {
-      setSummaryLoading(true)
-      setView('done')
-      try {
-        const s = await fetchSessionSummary(sessionId!, evaluationsList)
-        setSummary(s)
-      } catch (err) {
-        setNetworkError(err instanceof Error ? err.message : 'Could not load summary.')
-      } finally {
-        setSummaryLoading(false)
-      }
-    } else {
-      setQIndex((i) => i + 1)
-      setEvaluation({})
-      reset()
-    }
+    goToNextOrFinish()
   }
 
   if (view === 'history') {
@@ -285,7 +370,7 @@ export default function App() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h2 className="text-base font-semibold text-gray-900">Manual Questions</h2>
-                    <p className="text-xs text-gray-500 mt-1">Each question starts with <code className="text-gray-600">-</code> — format: <code className="text-gray-600">- question text | category</code></p>
+                    <p className="text-xs text-gray-500 mt-1">Each question starts with format: - question text | category</p>
                   </div>
                   <button
                     onClick={() => {
@@ -453,10 +538,33 @@ export default function App() {
       structure: summary.avg_structure,
     } : null
 
+    async function saveSessionName() {
+      if (!sessionId) return
+      setSessionNameSaving(true)
+      try { await patchSession(sessionId, sessionName.trim() || null) } catch { /* ignore */ }
+      finally { setSessionNameSaving(false) }
+    }
+
     return (
       <div className="min-h-screen bg-gray-50 p-6">
         <div className="max-w-2xl mx-auto space-y-6">
-          <h1 className="text-2xl font-bold text-gray-900">Session complete</h1>
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 mb-3">Session complete</h1>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={sessionName}
+                onChange={e => setSessionName(e.target.value)}
+                onBlur={saveSessionName}
+                onKeyDown={e => { if (e.key === 'Enter') { e.currentTarget.blur() } }}
+                placeholder="Add a name to this session…"
+                className="flex-1 rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-800 placeholder-gray-400 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+              {sessionNameSaving && (
+                <span className="text-xs text-gray-400">Saving…</span>
+              )}
+            </div>
+          </div>
 
           {summaryLoading && (
             <p className="text-sm text-indigo-500 animate-pulse">Generating summary…</p>
@@ -510,23 +618,93 @@ export default function App() {
                 </ol>
               </div>
 
-              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                <div className="flex items-center justify-between mb-3">
-                  <h2 className="font-semibold text-gray-900">Full transcript</h2>
-                  <button
-                    onClick={() => navigator.clipboard.writeText(summary.full_transcript)}
-                    className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-1"
-                  >
-                    Copy
-                  </button>
-                </div>
-                <pre className="text-sm text-gray-600 whitespace-pre-wrap font-sans leading-relaxed">{summary.full_transcript}</pre>
-              </div>
             </>
           )}
 
+          {answersLog.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="font-semibold text-gray-900">Questions & answers</h2>
+                <button
+                  onClick={() => {
+                    const text = answersLog
+                      .map((a, i) => `${i + 1}. ${a.question}\n${a.transcript}`)
+                      .join('\n\n')
+                    navigator.clipboard.writeText(text)
+                    setCopiedAnswers(true)
+                    setTimeout(() => setCopiedAnswers(false), 2000)
+                  }}
+                  title="Copy all to clipboard"
+                  aria-label="Copy all to clipboard"
+                  className="p-2 rounded-lg border border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-colors"
+                >
+                  {copiedAnswers ? (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="2" stroke="currentColor" className="w-4 h-4 text-green-500">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                    </svg>
+                  ) : (
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-4 h-4">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+              <ol className="space-y-4">
+                {answersLog.map((a, i) => (
+                  <li key={i} className="border-b border-gray-100 last:border-0 pb-3 last:pb-0">
+                    <p className="text-sm font-medium text-gray-900">
+                      <span className="text-indigo-500 mr-2">{i + 1}.</span>{a.question}
+                    </p>
+                    {editingAnswerIndex === i ? (
+                      <div className="mt-1 space-y-1">
+                        <textarea
+                          value={editAnswerValue}
+                          onChange={e => setEditAnswerValue(e.target.value)}
+                          rows={3}
+                          autoFocus
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              setAnswersLog(prev => prev.map((x, j) => j === i ? { ...x, transcript: editAnswerValue } : x))
+                              setEditingAnswerIndex(null)
+                            }}
+                            className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setEditingAnswerIndex(null)}
+                            className="text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-start gap-2 mt-1 group">
+                        <p className="flex-1 text-sm text-gray-600 whitespace-pre-wrap">{a.transcript}</p>
+                        <button
+                          onClick={() => { setEditAnswerValue(a.transcript); setEditingAnswerIndex(i) }}
+                          aria-label="Edit answer"
+                          title="Edit answer"
+                          className="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-indigo-600 transition-all shrink-0"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-3.5 h-3.5">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                          </svg>
+                        </button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
           <button
-            onClick={() => { setView('setup'); setSetupStep('choose'); setManualText(''); setJdUrl(''); setQuestions([]); setEvaluationsList([]); setSummary(null); setLoadError(null); setNetworkError(null); reset() }}
+            onClick={() => { setView('setup'); setSetupStep('choose'); setManualText(''); setJdUrl(''); setQuestions([]); setEvaluationsList([]); setAnswersLog([]); setSummary(null); setLoadError(null); setNetworkError(null); setRecordElapsed(0); setSessionName(''); setEditingAnswerIndex(null); reset() }}
             className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50"
           >
             New session
@@ -537,10 +715,13 @@ export default function App() {
   }
 
   const currentQuestion = questions[qIndex]
+  const hasStarted = isListening || effectiveTranscript.length > 0
+  const evalDone = evaluation.overall_score !== undefined && !streaming
+  const showActions = effectiveTranscript && !streaming && !evalDone && !submitting && !editingTranscript
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
-      <div className="max-w-2xl mx-auto space-y-6">
+      <div className="max-w-2xl mx-auto space-y-10">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-bold text-gray-900">Prepwise</h1>
           <span className="text-sm text-gray-400">{qIndex + 1} / {questions.length}</span>
@@ -559,31 +740,143 @@ export default function App() {
           </p>
         )}
 
-        <div className="flex flex-col items-center gap-4">
-          <RecordButton isListening={isListening} onStart={start} onStop={stop} disabled={!supported} />
-          {transcript && (
-            <p className="text-sm text-gray-500 text-center max-w-lg">{transcript}</p>
+        <div className="flex flex-col items-center gap-5">
+          <div className="flex items-center justify-center gap-6">
+            {/* Skip or Restart */}
+            <button
+              onClick={hasStarted ? handleRestartRecording : handleSkipQuestion}
+              disabled={!supported || streaming || submitting}
+              aria-label={hasStarted ? 'Restart recording' : 'Skip question'}
+              title={hasStarted ? 'Restart recording' : 'Skip question'}
+              className="w-12 h-12 rounded-full border border-gray-200 bg-white text-gray-500 flex items-center justify-center hover:text-gray-800 hover:border-gray-300 hover:bg-gray-50 transition-all disabled:opacity-40"
+            >
+              {hasStarted ? (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 12a7.5 7.5 0 11-2.197-5.303M19.5 4.5v4.5h-4.5" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 8.689c0-.864.933-1.405 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061A1.125 1.125 0 013 16.811V8.69zM12.75 8.689c0-.864.933-1.405 1.683-.977l7.108 4.061a1.125 1.125 0 010 1.954l-7.108 4.061a1.125 1.125 0 01-1.683-.977V8.69z" />
+                </svg>
+              )}
+            </button>
+
+            {/* Record / Stop (main, bigger) */}
+            <button
+              onClick={isListening ? stop : handleStartRecording}
+              disabled={!supported || streaming || submitting}
+              aria-label={isListening ? 'Stop recording' : 'Start recording'}
+              title={isListening ? 'Stop recording' : 'Start recording'}
+              className={`w-20 h-20 rounded-full flex items-center justify-center text-white shadow-md transition-colors disabled:opacity-40 ${
+                isListening
+                  ? 'bg-red-500 hover:bg-red-600'
+                  : 'bg-indigo-600 hover:bg-indigo-700'
+              }`}
+            >
+              {isListening ? (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-7 h-7">
+                  <rect x="6" y="6" width="12" height="12" rx="2" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
+                  <path d="M8.25 4.5a3.75 3.75 0 117.5 0v8.25a3.75 3.75 0 11-7.5 0V4.5z" />
+                  <path d="M6 10.5a.75.75 0 01.75.75v1.5a5.25 5.25 0 1010.5 0v-1.5a.75.75 0 011.5 0v1.5a6.751 6.751 0 01-6 6.71v2.29h3a.75.75 0 010 1.5h-7.5a.75.75 0 010-1.5h3v-2.29a6.751 6.751 0 01-6-6.71v-1.5A.75.75 0 016 10.5z" />
+                </svg>
+              )}
+            </button>
+
+            {/* Show / Hide transcript */}
+            <button
+              onClick={() => setShowTranscript(s => !s)}
+              disabled={!effectiveTranscript}
+              aria-label={showTranscript ? 'Hide transcript' : 'Show transcript'}
+              title={showTranscript ? 'Hide transcript' : 'Show transcript'}
+              className="w-12 h-12 rounded-full border border-gray-200 bg-white text-gray-500 flex items-center justify-center hover:text-gray-800 hover:border-gray-300 hover:bg-gray-50 transition-all disabled:opacity-40"
+            >
+              {showTranscript ? (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.243 4.243l-4.243-4.243" />
+                </svg>
+              ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-5 h-5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+              )}
+            </button>
+          </div>
+
+          <span className="text-sm text-gray-500 tabular-nums">{formatTime(recordElapsed)}</span>
+
+          {effectiveTranscript && showTranscript && !editingTranscript && (
+            <p className="text-sm text-gray-500 text-center max-w-lg animate-fade-in-up">{effectiveTranscript}</p>
           )}
         </div>
 
-        {transcript && !streaming && !evaluation.overall_score && (
-          <button
-            onClick={submitAnswer}
-            className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700"
-          >
-            Submit & evaluate
-          </button>
+        {/* Inline transcript editor */}
+        {editingTranscript && effectiveTranscript && (
+          <div className="space-y-2">
+            <textarea
+              value={editTranscriptValue}
+              onChange={e => setEditTranscriptValue(e.target.value)}
+              rows={4}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setManualTranscript(editTranscriptValue); setEditingTranscript(false) }}
+                className="flex-1 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 transition-colors"
+              >
+                Confirm
+              </button>
+              <button
+                onClick={() => setEditingTranscript(false)}
+                className="px-3 py-2 text-sm text-gray-500 hover:text-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showActions && (
+          <div className="flex items-center gap-3">
+            <button
+              onClick={submitWithoutEval}
+              className="flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+            >
+              Submit
+            </button>
+            <button
+              onClick={evaluateAnswer}
+              className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors"
+            >
+              Evaluate
+            </button>
+            {/* Edit transcript */}
+            <button
+              onClick={() => { setEditTranscriptValue(effectiveTranscript); setEditingTranscript(true); setShowTranscript(false) }}
+              aria-label="Edit transcript"
+              title="Edit transcript"
+              className="w-12 h-12 rounded-lg border border-gray-200 bg-white text-gray-400 flex items-center justify-center hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-colors shrink-0"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+              </svg>
+            </button>
+          </div>
         )}
 
         {(streaming || evaluation.overall_score !== undefined) && (
           <EvaluationCard evaluation={evaluation} streaming={streaming} />
         )}
 
-        {evaluation.overall_score !== undefined && !streaming && (
+        {evalDone && (
           <button
             onClick={nextQuestion}
             disabled={saving}
-            className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50 disabled:opacity-40"
+            className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50 disabled:opacity-40 transition-colors"
           >
             {saving ? 'Saving…' : qIndex + 1 >= questions.length ? 'Finish session' : 'Next question →'}
           </button>

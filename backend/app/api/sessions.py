@@ -13,12 +13,16 @@ class SessionCreate(BaseModel):
     question_set: str | None = None
 
 
+class SessionPatch(BaseModel):
+    name: str | None = None
+
+
 class AnswerCreate(BaseModel):
     session_id: int
     question: str
     transcript_raw: str
     transcript_clean: str
-    evaluation_json: str
+    evaluation_json: str | None = None
 
 
 @router.post("")
@@ -32,7 +36,15 @@ async def create_session(body: SessionCreate, db: aiosqlite.Connection = Depends
 
 @router.post("/answers")
 async def save_answer(body: AnswerCreate, db: aiosqlite.Connection = Depends(get_db)) -> dict:
-    data = json.loads(body.evaluation_json)
+    if body.evaluation_json:
+        data = json.loads(body.evaluation_json)
+        scores = (
+            data["specificity"]["score"], data["evidence"]["score"],
+            data["relevance"]["score"], data["structure"]["score"],
+            data["overall_score"],
+        )
+    else:
+        scores = (None, None, None, None, None)
     cursor = await db.execute(
         """INSERT INTO answers
            (session_id, question, transcript_raw, transcript_clean,
@@ -40,10 +52,7 @@ async def save_answer(body: AnswerCreate, db: aiosqlite.Connection = Depends(get
            VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (
             body.session_id, body.question, body.transcript_raw,
-            body.transcript_clean, data["specificity"]["score"],
-            data["evidence"]["score"], data["relevance"]["score"],
-            data["structure"]["score"], data["overall_score"],
-            body.evaluation_json,
+            body.transcript_clean, *scores, body.evaluation_json,
         ),
     )
     await db.commit()
@@ -53,7 +62,7 @@ async def save_answer(body: AnswerCreate, db: aiosqlite.Connection = Depends(get
 @router.get("")
 async def list_sessions(db: aiosqlite.Connection = Depends(get_db)) -> list[dict]:
     cursor = await db.execute(
-        """SELECT s.id, s.created_at, s.question_set,
+        """SELECT s.id, s.created_at, s.question_set, s.name,
                   ROUND(AVG(a.overall_score), 2) AS avg_overall,
                   COUNT(a.id) AS answer_count
            FROM sessions s
@@ -62,6 +71,18 @@ async def list_sessions(db: aiosqlite.Connection = Depends(get_db)) -> list[dict
            ORDER BY s.created_at DESC"""
     )
     return await cursor.fetchall()
+
+
+@router.patch("/{session_id}")
+async def patch_session(
+    session_id: int, body: SessionPatch, db: aiosqlite.Connection = Depends(get_db)
+) -> dict:
+    cursor = await db.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,))
+    if not await cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Session not found")
+    await db.execute("UPDATE sessions SET name = ? WHERE id = ?", (body.name, session_id))
+    await db.commit()
+    return {"session_id": session_id, "name": body.name}
 
 
 @router.delete("/{session_id}")
@@ -74,10 +95,10 @@ async def delete_session(session_id: int, db: aiosqlite.Connection = Depends(get
 
 @router.get("/{session_id}/answers")
 async def get_answers(session_id: int, db: aiosqlite.Connection = Depends(get_db)) -> list[dict]:
+    session_cursor = await db.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,))
+    if not await session_cursor.fetchone():
+        raise HTTPException(status_code=404, detail="Session not found")
     cursor = await db.execute(
         "SELECT * FROM answers WHERE session_id = ? ORDER BY created_at", (session_id,)
     )
-    rows = await cursor.fetchall()
-    if not rows:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return rows
+    return await cursor.fetchall()
