@@ -1,6 +1,15 @@
 #!/bin/sh
-# Pre-push hook: run the full test suite including live LLM tests.
-# Set SKIP_LIVE_TESTS=1 to bypass live tests when offline.
+# Pre-push hook.
+#
+# Default behaviour:
+#   1. Always run the offline test suite (no API calls).
+#   2. If offline tests fail → abort immediately.
+#   3. If files that touch LLM/RAG/tools changed in this push → run live tests.
+#   4. Otherwise skip live tests to avoid burning API quota.
+#
+# Overrides:
+#   SKIP_LIVE_TESTS=1   — never run live tests (use when offline or quota exhausted)
+#   FORCE_LIVE_TESTS=1  — always run live tests regardless of changed files
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT/backend" || exit 1
@@ -13,10 +22,52 @@ fi
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
-if [ "${SKIP_LIVE_TESTS:-0}" = "1" ]; then
-    echo "[pre-push] SKIP_LIVE_TESTS=1 — running offline tests only"
-    pytest -q
-else
-    echo "[pre-push] running full test suite (--live)"
-    pytest -q --live
+# --- Step 1: offline tests (always) ---
+echo "[pre-push] running offline tests…"
+if ! pytest -q; then
+    echo "[pre-push] FAILED — fix offline tests before pushing."
+    exit 1
 fi
+
+# --- Step 2: decide whether to run live tests ---
+if [ "${SKIP_LIVE_TESTS:-0}" = "1" ]; then
+    echo "[pre-push] SKIP_LIVE_TESTS=1 — skipping live tests."
+    exit 0
+fi
+
+if [ "${FORCE_LIVE_TESTS:-0}" = "1" ]; then
+    echo "[pre-push] FORCE_LIVE_TESTS=1 — running live tests."
+    exec pytest -q --live
+fi
+
+# Files whose change justifies running live tests
+LIVE_PATTERNS="app/services/llm.py app/services/rag.py app/services/tools.py tests/"
+
+# Collect the range of commits being pushed (read from stdin per git hook protocol)
+CHANGED=""
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+        range="$local_sha"
+    else
+        range="$remote_sha..$local_sha"
+    fi
+    FILES=$(git diff --name-only "$range" 2>/dev/null || true)
+    for pattern in $LIVE_PATTERNS; do
+        if echo "$FILES" | grep -q "$pattern"; then
+            CHANGED=1
+            break 2
+        fi
+    done
+done
+
+if [ -n "$CHANGED" ]; then
+    echo "[pre-push] LLM/RAG/test files changed — running live tests."
+    if ! pytest -q --live; then
+        echo "[pre-push] FAILED — live tests failed."
+        exit 1
+    fi
+else
+    echo "[pre-push] No LLM/RAG/test files changed — skipping live tests. (Use FORCE_LIVE_TESTS=1 to override.)"
+fi
+
+exit 0
