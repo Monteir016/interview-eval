@@ -121,6 +121,13 @@ export async function generateQuestions(
   return res.json()
 }
 
+export async function deleteSession(session_id: number): Promise<void> {
+  await checkOk(
+    await fetch(`${BASE}/sessions/${session_id}`, { method: 'DELETE' }),
+    'deleteSession'
+  )
+}
+
 export async function listSessions(): Promise<import('../types').SessionListItem[]> {
   const res = await checkOk(await fetch(`${BASE}/sessions`), 'listSessions')
   return res.json()

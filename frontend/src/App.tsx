@@ -44,18 +44,21 @@ export default function App() {
   const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
 
   function parseManualText(text: string): Question[] {
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean)
-    if (lines.length === 0) throw new Error('Add at least one question.')
-    if (lines.length > 10) throw new Error('Maximum is 10 questions.')
-    return lines.map((line, i) => {
-      const sep = line.indexOf('|')
+    const entries = text
+      .split(/\n(?=-)/)
+      .map(chunk => chunk.replace(/^-\s*/, '').trim())
+      .filter(Boolean)
+    if (entries.length === 0) throw new Error('Add at least one question starting with -')
+    if (entries.length > 10) throw new Error('Maximum is 10 questions.')
+    return entries.map((entry, i) => {
+      const sep = entry.lastIndexOf('|')
       if (sep === -1) {
-        throw new Error(`Line ${i + 1} is missing "| category". Format: question text | category`)
+        throw new Error(`Question ${i + 1} is missing "| category"`)
       }
-      const textPart = line.slice(0, sep).trim()
-      const categoryPart = line.slice(sep + 1).trim()
-      if (!textPart) throw new Error(`Line ${i + 1} is missing question text.`)
-      if (!categoryPart) throw new Error(`Line ${i + 1} is missing the category.`)
+      const textPart = entry.slice(0, sep).trim()
+      const categoryPart = entry.slice(sep + 1).trim()
+      if (!textPart) throw new Error(`Question ${i + 1} is missing question text.`)
+      if (!categoryPart) throw new Error(`Question ${i + 1} is missing the category.`)
       return { text: textPart, category: categoryPart }
     })
   }
@@ -210,11 +213,11 @@ export default function App() {
   }
 
   if (view === 'setup') {
-    const manualLineCount = manualText.split('\n').map(l => l.trim()).filter(Boolean).length
+    const manualLineCount = manualText.split(/\n(?=-)/).map(chunk => chunk.replace(/^-\s*/, '').trim()).filter(Boolean).length
 
     return (
       <div className="min-h-screen bg-gray-50 flex items-start justify-center p-6 pt-16">
-        <div className="w-full max-w-md space-y-5">
+        <div className="w-full max-w-xl space-y-5">
           <div className="flex items-center justify-between px-1">
             <h1 className="text-3xl font-bold text-gray-900 tracking-tight">Prepwise</h1>
             <button
@@ -282,11 +285,11 @@ export default function App() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h2 className="text-base font-semibold text-gray-900">Manual Questions</h2>
-                    <p className="text-xs text-gray-500 mt-1">One question per line — <code className="text-gray-600">question text | category</code></p>
+                    <p className="text-xs text-gray-500 mt-1">Each question starts with <code className="text-gray-600">-</code> — format: <code className="text-gray-600">- question text | category</code></p>
                   </div>
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText('Write interview questions with the format: question text | category, one per line. Only output the lines, nothing else.')
+                      navigator.clipboard.writeText('The format of the questions is: - question text | category. Each question starts with a dash. Output only the lines, nothing else.')
                       setCopied(true)
                       setTimeout(() => setCopied(false), 2000)
                     }}
@@ -309,8 +312,8 @@ export default function App() {
                   value={manualText}
                   onChange={(e) => { setManualText(e.target.value); setLoadError(null) }}
                   rows={8}
-                  placeholder={'Tell me about a project you led | behavioral\nHow would you scale a real-time chat? | system design'}
-                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none resize-y"
+                  placeholder={'- Tell me about a project you led | behavioral\n- How would you scale a real-time chat? | system design'}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm font-mono focus:border-indigo-400 focus:outline-none resize-y min-h-48"
                 />
                 <div className="flex items-center justify-between text-xs">
                   <span className={`${manualLineCount > 10 ? 'text-red-500' : 'text-gray-400'}`}>

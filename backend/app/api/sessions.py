@@ -64,6 +64,14 @@ async def list_sessions(db: aiosqlite.Connection = Depends(get_db)) -> list[dict
     return await cursor.fetchall()
 
 
+@router.delete("/{session_id}")
+async def delete_session(session_id: int, db: aiosqlite.Connection = Depends(get_db)) -> dict:
+    await db.execute("DELETE FROM answers WHERE session_id = ?", (session_id,))
+    await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+    await db.commit()
+    return {"deleted": session_id}
+
+
 @router.get("/{session_id}/answers")
 async def get_answers(session_id: int, db: aiosqlite.Connection = Depends(get_db)) -> list[dict]:
     cursor = await db.execute(
