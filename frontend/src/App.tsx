@@ -14,6 +14,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [evaluation, setEvaluation] = useState<Partial<AnswerEvaluation>>({})
   const [streaming, setStreaming] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [networkError, setNetworkError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -79,6 +80,7 @@ export default function App() {
         setEvaluation({ ...accumulated })
       }
       setStreaming(false)
+      setSaving(true)
 
       await saveAnswer({
         session_id: sessionId,
@@ -87,8 +89,10 @@ export default function App() {
         transcript_clean: clean,
         evaluation_json: JSON.stringify(accumulated),
       })
+      setSaving(false)
     } catch (err) {
       setStreaming(false)
+      setSaving(false)
       setNetworkError(err instanceof Error ? err.message : 'Something went wrong.')
     }
   }
@@ -204,9 +208,10 @@ export default function App() {
         {evaluation.overall_score !== undefined && !streaming && (
           <button
             onClick={nextQuestion}
-            className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50"
+            disabled={saving}
+            className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50 disabled:opacity-40"
           >
-            {qIndex + 1 >= questions.length ? 'Finish session' : 'Next question →'}
+            {saving ? 'Saving…' : qIndex + 1 >= questions.length ? 'Finish session' : 'Next question →'}
           </button>
         )}
       </div>
