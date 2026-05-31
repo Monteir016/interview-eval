@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { AnswerEvaluation, Question } from './types'
+import type { AnswerEvaluation, Question, SessionSummary } from './types'
 import { useSpeech } from './hooks/useSpeech'
 import { RecordButton } from './components/RecordButton'
 import { EvaluationCard } from './components/EvaluationCard'
-import { cleanTranscript, streamEvaluation, createSession, saveAnswer } from './api/client'
+import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary } from './api/client'
 
 type View = 'setup' | 'session' | 'done'
 
@@ -15,6 +15,9 @@ export default function App() {
   const [evaluation, setEvaluation] = useState<Partial<AnswerEvaluation>>({})
   const [streaming, setStreaming] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [evaluationsList, setEvaluationsList] = useState<AnswerEvaluation[]>([])
+  const [summary, setSummary] = useState<SessionSummary | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
   const [networkError, setNetworkError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
@@ -89,6 +92,7 @@ export default function App() {
         transcript_clean: clean,
         evaluation_json: JSON.stringify(accumulated),
       })
+      setEvaluationsList(prev => [...prev, accumulated as AnswerEvaluation])
       setSaving(false)
     } catch (err) {
       setStreaming(false)
@@ -97,10 +101,19 @@ export default function App() {
     }
   }
 
-  function nextQuestion() {
+  async function nextQuestion() {
     setNetworkError(null)
     if (qIndex + 1 >= questions.length) {
+      setSummaryLoading(true)
       setView('done')
+      try {
+        const s = await fetchSessionSummary(sessionId!, evaluationsList)
+        setSummary(s)
+      } catch (err) {
+        setNetworkError(err instanceof Error ? err.message : 'Could not load summary.')
+      } finally {
+        setSummaryLoading(false)
+      }
     } else {
       setQIndex((i) => i + 1)
       setEvaluation({})
@@ -146,13 +159,87 @@ export default function App() {
   }
 
   if (view === 'done') {
+    const dimAverages = summary ? {
+      specificity: summary.avg_specificity,
+      evidence: summary.avg_evidence,
+      relevance: summary.avg_relevance,
+      structure: summary.avg_structure,
+    } : null
+
     return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 w-full max-w-md space-y-4">
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-2xl mx-auto space-y-6">
           <h1 className="text-2xl font-bold text-gray-900">Session complete</h1>
-          <p className="text-gray-500 text-sm">All {questions.length} questions answered.</p>
+
+          {summaryLoading && (
+            <p className="text-sm text-indigo-500 animate-pulse">Generating summary…</p>
+          )}
+
+          {networkError && (
+            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              {networkError}
+            </p>
+          )}
+
+          {summary && dimAverages && (
+            <>
+              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm space-y-4">
+                <h2 className="font-semibold text-gray-900">Scores</h2>
+                {(['specificity', 'evidence', 'relevance', 'structure'] as const).map((dim) => {
+                  const avg = dimAverages[dim]
+                  const isWeakest = summary.weakest_dimension === dim
+                  return (
+                    <div key={dim}>
+                      <div className="flex items-center justify-between mb-1">
+                        <span className={`capitalize text-sm font-medium ${isWeakest ? 'text-amber-600' : 'text-gray-700'}`}>
+                          {dim}{isWeakest ? ' ← weakest' : ''}
+                        </span>
+                        <span className="text-sm text-gray-500">{avg.toFixed(1)} / 5</span>
+                      </div>
+                      <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className={`h-2 rounded-full ${isWeakest ? 'bg-amber-400' : 'bg-indigo-400'}`}
+                          style={{ width: `${(avg / 5) * 100}%` }}
+                        />
+                      </div>
+                    </div>
+                  )
+                })}
+                <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-gray-700">Overall</span>
+                  <span className="text-sm font-semibold text-gray-700">{summary.avg_overall.toFixed(1)} / 5</span>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <h2 className="font-semibold text-gray-900 mb-3">Top improvements</h2>
+                <ol className="space-y-2">
+                  {summary.top_improvements.map((tip, i) => (
+                    <li key={i} className="flex gap-3 text-sm text-gray-700">
+                      <span className="text-amber-500 font-bold shrink-0">{i + 1}.</span>
+                      <span>{tip}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
+
+              <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-3">
+                  <h2 className="font-semibold text-gray-900">Full transcript</h2>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(summary.full_transcript)}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 border border-indigo-200 rounded px-2 py-1"
+                  >
+                    Copy
+                  </button>
+                </div>
+                <pre className="text-sm text-gray-600 whitespace-pre-wrap font-sans leading-relaxed">{summary.full_transcript}</pre>
+              </div>
+            </>
+          )}
+
           <button
-            onClick={() => { setView('setup'); setQuestions([]); reset() }}
+            onClick={() => { setView('setup'); setQuestions([]); setEvaluationsList([]); setSummary(null); setNetworkError(null); reset() }}
             className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50"
           >
             New session

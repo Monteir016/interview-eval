@@ -88,3 +88,18 @@ export async function saveAnswer(payload: {
   const data = await res.json()
   return data.answer_id
 }
+
+export async function fetchSessionSummary(
+  session_id: number,
+  evaluations: import('../types').AnswerEvaluation[]
+): Promise<import('../types').SessionSummary> {
+  const res = await checkOk(
+    await fetch(`${BASE}/evaluation/session/summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id, evaluations }),
+    }),
+    'fetchSessionSummary'
+  )
+  return res.json()
+}

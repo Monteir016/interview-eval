@@ -78,25 +78,53 @@ def evaluate_answer(question: str, transcript_clean: str, context_chunks: list[s
 
 
 def summarise_session(session_id: int, evaluations: list[AnswerEvaluation]) -> SessionSummary:
-    evals_json = json.dumps([e.model_dump() for e in evaluations], indent=2)
-    schema_example = json.dumps(SessionSummary.model_json_schema(), indent=2)
+    n = len(evaluations)
+    avg_specificity = round(sum(e.specificity.score for e in evaluations) / n, 2)
+    avg_evidence = round(sum(e.evidence.score for e in evaluations) / n, 2)
+    avg_relevance = round(sum(e.relevance.score for e in evaluations) / n, 2)
+    avg_structure = round(sum(e.structure.score for e in evaluations) / n, 2)
+    avg_overall = round(sum(e.overall_score for e in evaluations) / n, 2)
+
+    dim_avgs = {
+        "specificity": avg_specificity,
+        "evidence": avg_evidence,
+        "relevance": avg_relevance,
+        "structure": avg_structure,
+    }
+    weakest_dimension = min(dim_avgs, key=lambda k: dim_avgs[k])
+
+    full_transcript = "\n\n".join(
+        f"Q: {e.question}\nA: {e.transcript_clean}" for e in evaluations
+    )
+
     prompt = (
-        "Summarise this interview session from the evaluations below.\n\n"
-        f"{evals_json}\n\n"
-        "Return avg scores per dimension, weakest_dimension, top 3 improvements, "
-        "and a full_transcript block combining all cleaned answers.\n\n"
-        "Return a JSON object matching this schema exactly:\n"
-        f"{schema_example}\n\n"
-        "The response must be valid JSON only, no markdown, no explanation."
+        "You are an interview coach. Based on these interview answer evaluations, "
+        "list exactly 3 concrete, actionable improvements for this candidate.\n\n"
+        "Be specific: reference the candidate's actual patterns (e.g. 'your answers describe "
+        "what you did but rarely name the measurable outcome'), not generic advice.\n\n"
+        f"Evaluations:\n{json.dumps([e.model_dump() for e in evaluations], indent=2)}\n\n"
+        'Return a JSON object with exactly this shape:\n'
+        '{"top_improvements": ["improvement 1", "improvement 2", "improvement 3"]}'
     )
     response = _client.chat.completions.create(
         model=_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
     )
-    summary = SessionSummary.model_validate_json(response.choices[0].message.content)
-    summary.session_id = session_id
-    return summary
+    data = json.loads(response.choices[0].message.content)
+    top_improvements = data["top_improvements"][:3]
+
+    return SessionSummary(
+        session_id=session_id,
+        avg_specificity=avg_specificity,
+        avg_evidence=avg_evidence,
+        avg_relevance=avg_relevance,
+        avg_structure=avg_structure,
+        avg_overall=avg_overall,
+        weakest_dimension=weakest_dimension,
+        top_improvements=top_improvements,
+        full_transcript=full_transcript,
+    )
 
 
 def generate_questions(jd_text: str, context_chunks: list[str]) -> QuestionSet:
