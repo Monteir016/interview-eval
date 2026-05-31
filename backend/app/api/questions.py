@@ -15,6 +15,7 @@ router = APIRouter(prefix="/questions", tags=["questions"])
 
 class GenerateRequest(BaseModel):
     jd_url: str
+    count: int = 10
 
 
 def _save_to_private(question_set: QuestionSet) -> None:
@@ -27,8 +28,9 @@ def _save_to_private(question_set: QuestionSet) -> None:
 
 @router.post("/generate", response_model=QuestionSet)
 async def generate(body: GenerateRequest) -> QuestionSet:
+    count = max(1, min(body.count, 10))
     try:
-        question_set = await asyncio.to_thread(generate_questions, body.jd_url)
+        question_set = await asyncio.to_thread(generate_questions, body.jd_url, count)
         await asyncio.to_thread(_save_to_private, question_set)
         return question_set
     except Exception as e:

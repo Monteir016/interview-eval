@@ -105,13 +105,16 @@ export async function fetchSessionSummary(
 }
 
 export async function generateQuestions(
-  jd_url: string
+  jd_url: string,
+  count: number = 10,
+  signal?: AbortSignal
 ): Promise<import('../types').QuestionSet> {
   const res = await checkOk(
     await fetch(`${BASE}/questions/generate`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jd_url }),
+      body: JSON.stringify({ jd_url, count }),
+      signal,
     }),
     'generateQuestions'
   )

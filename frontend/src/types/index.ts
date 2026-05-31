@@ -32,7 +32,7 @@ export interface SessionSummary {
 export interface Question {
   text: string
   category: string
-  target_experience: string
+  target_experience?: string
 }
 
 export interface QuestionSet {

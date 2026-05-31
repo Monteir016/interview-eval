@@ -205,7 +205,7 @@ def _strip_fences(text: str) -> str:
     return text
 
 
-def generate_questions(jd_url: str) -> QuestionSet:
+def generate_questions(jd_url: str, count: int = 10) -> QuestionSet:
     """Run a manual tool-calling loop to produce a JD-tailored QuestionSet.
 
     Expected message sequence on the happy path:
@@ -220,25 +220,28 @@ def generate_questions(jd_url: str) -> QuestionSet:
     generation we want comprehensive coverage of the candidate, not the surgical
     top-k retrieval RAG provides during evaluation.
     """
+    count = max(1, min(count, 10))
+    grounded_min = max(1, round(count * 0.3))
+    company_min = max(1, round(count * 0.2))
     schema_example = json.dumps(QuestionSet.model_json_schema(), indent=2)
     system_prompt = (
         "You are an expert interview question writer for THIS specific candidate going into "
         "THIS specific role. Your goal is questions that could only be asked of this person "
         "applying to this company — not generic interview questions.\n\n"
         "NON-NEGOTIABLE REQUIREMENTS:\n"
-        "  - At least 3 of the 10 questions MUST name a specific candidate experience "
+        f"  - At least {grounded_min} of the {count} questions MUST name a specific candidate experience "
         "(e.g. 'At Lazzo, you …', 'In your IST coursework on …', 'When you ran the marketing "
         "agency …'). Vague 'tell me about a challenging project' without naming the project "
         "is forbidden.\n"
-        "  - At least 2 questions MUST reference company-specific context you found via "
+        f"  - At least {company_min} questions MUST reference company-specific context you found via "
         "search (the company's actual product, tech stack, or recent moves) — not generic "
         "company-fit questions.\n"
-        "  - The remaining 5 can be broader role-fit questions but must still tie to the JD.\n\n"
+        "  - The remaining questions can be broader role-fit questions but must still tie to the JD.\n\n"
         "WORKFLOW:\n"
         "  1. Call `fetch_jd` with the URL the user provides to load the JD text.\n"
         "  2. Call `search_company` once with the company name (plus a topic like "
         "'engineering blog' if useful) to gather context beyond the JD.\n"
-        "  3. Generate 10 questions per the requirements above.\n"
+        f"  3. Generate exactly {count} questions per the requirements above.\n"
         "  4. Return ONLY a JSON object matching the QuestionSet schema — no markdown, "
         "no explanation, no preamble.\n\n"
         "EXAMPLES of grounded questions (do this):\n"
@@ -259,7 +262,7 @@ def generate_questions(jd_url: str) -> QuestionSet:
         {"role": "system", "content": system_prompt},
         {
             "role": "user",
-            "content": f"Generate 10 interview questions for this job posting: {jd_url}",
+            "content": f"Generate exactly {count} interview questions for this job posting: {jd_url}",
         },
     ]
 

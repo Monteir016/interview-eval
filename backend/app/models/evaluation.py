@@ -37,7 +37,7 @@ class SessionSummary(BaseModel):
 class Question(BaseModel):
     text: str
     category: str
-    target_experience: str
+    target_experience: str = ""
 
 
 class QuestionSet(BaseModel):

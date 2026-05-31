@@ -34,15 +34,22 @@ _SEARCH_MAX_RESULTS = 5
 
 def fetch_jd(url: str) -> str:
     """Fetch and clean the text content of a job description from a URL."""
-    try:
-        response = _tavily().extract(urls=[url])
-    except Exception as e:
-        return f"ERROR fetching {url}: {type(e).__name__}: {e}"
-    results = response.get("results") or []
-    if not results:
-        return f"ERROR: no content extracted from {url}"
-    text = results[0].get("raw_content") or ""
-    return text[:_JD_CHAR_LIMIT]
+    import time
+    last_error: str = ""
+    for attempt in range(2):
+        try:
+            response = _tavily().extract(urls=[url])
+            results = response.get("results") or []
+            if results:
+                text = results[0].get("raw_content") or ""
+                if text.strip():
+                    return text[:_JD_CHAR_LIMIT]
+            last_error = f"no content extracted from {url}"
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {e}"
+        if attempt == 0:
+            time.sleep(2)
+    return f"ERROR fetching {url}: {last_error}"
 
 
 def search_company(query: str) -> str:
