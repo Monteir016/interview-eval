@@ -222,3 +222,60 @@ def test_question_set_schema_groq_compatible():
     schema_str = str(schema)
     assert "anyOf" not in schema_str
     assert '"default"' not in schema_str
+
+
+# --- Live LLM evaluation tests (Phase 5) ---
+
+STRONG_LIVE_ANSWER = (
+    "At Lazzo I owned the real-time photo upload feature end-to-end. "
+    "I designed a 24-hour upload window backed by Supabase Storage and Realtime channels, "
+    "which reduced post-event coordination messages by roughly 60 percent based on user feedback. "
+    "The key architectural call was WebSocket channels over polling, cutting perceived "
+    "upload latency from 3-4 seconds to under 500 milliseconds."
+)
+
+VAGUE_LIVE_ANSWER = "I worked on some projects and did various things that were pretty good."
+
+LIVE_QUESTION = "Tell me about a time you designed a system feature from scratch."
+
+
+def _avg(e: AnswerEvaluation) -> float:
+    return (e.specificity.score + e.evidence.score + e.relevance.score + e.structure.score) / 4
+
+
+@pytest.fixture(scope="module")
+def rag():
+    from app.services.rag import RAGService
+    svc = RAGService()
+    if svc.count == 0:
+        svc.index()
+    return svc
+
+
+@pytest.mark.live
+def test_evaluate_strong_answer_scores_high(rag):
+    from app.services.llm import evaluate_answer
+    chunks = rag.query(f"{LIVE_QUESTION} {STRONG_LIVE_ANSWER}")
+    result = evaluate_answer(LIVE_QUESTION, STRONG_LIVE_ANSWER, chunks)
+
+    assert _avg(result) >= 3.5, f"strong answer avg {_avg(result)} below 3.5"
+    assert 1.0 <= result.overall_score <= 5.0
+    assert result.key_strength.strip()
+    assert result.key_improvement.strip()
+    for dim in (result.specificity, result.evidence, result.relevance, result.structure):
+        assert 1 <= dim.score <= 5
+        assert dim.feedback.strip()
+    # Caller-injected fields preserved verbatim
+    assert result.question == LIVE_QUESTION
+    assert result.transcript_clean == STRONG_LIVE_ANSWER
+
+
+@pytest.mark.live
+def test_evaluate_vague_answer_scores_low(rag):
+    from app.services.llm import evaluate_answer
+    chunks = rag.query(f"{LIVE_QUESTION} {VAGUE_LIVE_ANSWER}")
+    result = evaluate_answer(LIVE_QUESTION, VAGUE_LIVE_ANSWER, chunks)
+
+    assert _avg(result) <= 2.5, f"vague answer avg {_avg(result)} above 2.5"
+    assert 1.0 <= result.overall_score <= 5.0
+    assert result.key_improvement.strip()

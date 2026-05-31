@@ -29,28 +29,52 @@ def clean_transcript(raw: str) -> str:
     return response.choices[0].message.content.strip()
 
 
+_EVAL_EXAMPLE = {
+    "specificity": {"score": 4, "feedback": "Names the project and the specific feature owned."},
+    "evidence": {"score": 3, "feedback": "Mentions outcomes but lacks quantified metrics."},
+    "relevance": {"score": 5, "feedback": "Directly addresses the system-design focus of the question."},
+    "structure": {"score": 4, "feedback": "Clear situation-action-result arc."},
+    "overall_score": 4.0,
+    "key_strength": "Concrete technical decision tied to a real shipped project.",
+    "key_improvement": "Quantify the outcome — latency, adoption, or retention numbers.",
+}
+
+
 def evaluate_answer(question: str, transcript_clean: str, context_chunks: list[str]) -> AnswerEvaluation:
     context_block = "\n---\n".join(context_chunks)
-    schema_example = json.dumps(AnswerEvaluation.model_json_schema(), indent=2)
+    example_json = json.dumps(_EVAL_EXAMPLE, indent=2)
     prompt = (
-        "You are an interview coach evaluating a candidate's answer. "
-        "Use the candidate background below to give specific, grounded feedback.\n\n"
+        "You are an interview coach evaluating a candidate's spoken answer. "
+        "Ground every piece of feedback in the CANDIDATE BACKGROUND below — "
+        "reference specific projects, companies, or experiences from it when relevant. "
+        "Do not give generic advice that ignores the candidate's actual history.\n\n"
         f"CANDIDATE BACKGROUND:\n{context_block}\n\n"
-        f"QUESTION: {question}\n\n"
-        f"ANSWER: {transcript_clean}\n\n"
-        "Evaluate on four dimensions (score 1–5): specificity, evidence, relevance, structure. "
-        "For each dimension provide a score (integer 1-5) and one sentence of feedback. "
-        "Also provide overall_score (float average of the four scores), key_strength, and key_improvement.\n\n"
-        "Return a JSON object matching this schema exactly:\n"
-        f"{schema_example}\n\n"
-        "The response must be valid JSON only, no markdown, no explanation."
+        f"QUESTION:\n{question}\n\n"
+        f"ANSWER:\n{transcript_clean}\n\n"
+        "Score the answer on four dimensions, each integer 1-5:\n"
+        "  - specificity: names concrete projects, technologies, and decisions (not vague claims).\n"
+        "  - evidence: backs claims with metrics, outcomes, or observable artefacts.\n"
+        "  - relevance: directly addresses what the question asked.\n"
+        "  - structure: clear situation-action-result arc; not rambling.\n\n"
+        "Scoring rubric — use the full range:\n"
+        "  1 = poor, 2 = weak, 3 = adequate, 4 = strong, 5 = excellent.\n"
+        "A one-sentence vague answer with no specifics should score 1-2 across all dimensions.\n"
+        "An answer with concrete projects, quantified outcomes, and clear structure should score 4-5.\n\n"
+        "`overall_score` must be the arithmetic mean of the four dimension scores (float, 1 decimal).\n"
+        "Each `feedback` field must be exactly one sentence. "
+        "`key_strength` and `key_improvement` must each be exactly one sentence.\n\n"
+        "Return a JSON object with EXACTLY these fields and shape — no extras, no markdown:\n"
+        f"{example_json}"
     )
     response = _client.chat.completions.create(
         model=_MODEL,
         messages=[{"role": "user", "content": prompt}],
         response_format={"type": "json_object"},
     )
-    return AnswerEvaluation.model_validate_json(response.choices[0].message.content)
+    data = json.loads(response.choices[0].message.content)
+    data["question"] = question
+    data["transcript_clean"] = transcript_clean
+    return AnswerEvaluation.model_validate(data)
 
 
 def summarise_session(session_id: int, evaluations: list[AnswerEvaluation]) -> SessionSummary:
