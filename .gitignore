@@ -1,3 +1,6 @@
+# Private / sensitive — CV data, generated JD files, personal context
+private/
+
 # Python
 __pycache__/
 *.pyc

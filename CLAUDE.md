@@ -103,7 +103,7 @@ SQLite via `aiosqlite`. Two tables: `sessions` and `answers`. The `answers` tabl
 GEMINI_API_KEY=...
 CHROMA_PERSIST_PATH=./chroma_db
 SQLITE_PATH=./prepwise.db
-FULL_CONTEXT_PATH=./FULL_CONTEXT.md
+FULL_CONTEXT_PATH=../private/FULL_CONTEXT.md
 RAG_TOP_K=5
 ```
 
