@@ -1,13 +1,22 @@
+import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.db.database import init_db
 from app.api import evaluation, sessions, transcription, questions
 
+logger = logging.getLogger("uvicorn.error")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    from app.services.rag import RAGService
+    rag = RAGService()
+    if rag.count == 0:
+        logger.warning("RAG collection is empty — run: python -m app.services.rag index")
+    else:
+        logger.info("RAG ready: %d chunks indexed", rag.count)
     yield
 
 
