@@ -9,9 +9,17 @@ _MODEL = "llama-3.3-70b-versatile"
 
 def clean_transcript(raw: str) -> str:
     prompt = (
-        "Clean the following spoken transcript. Remove filler words (um, uh, like, you know), "
-        "false starts, and repetitions. Preserve all meaning and keep first-person voice. "
-        "Return only the cleaned text, no explanation.\n\n"
+        "You are a transcript editor. Your only job is to remove noise from spoken text.\n\n"
+        "Rules (follow all of them):\n"
+        "1. Remove filler words: um, uh, like, you know, so, yeah, right, basically, literally.\n"
+        "2. Remove false starts (e.g. 'I, I worked' → 'I worked'; 'we, we built' → 'we built').\n"
+        "3. Remove immediate word-for-word repetitions.\n"
+        "4. Do NOT rephrase, paraphrase, or rewrite any sentence.\n"
+        "5. Do NOT improve grammar, style, or word choice beyond removing the items above.\n"
+        "6. Keep first-person voice exactly as-is ('I', 'we', 'my', 'our').\n"
+        "7. Do NOT add any words, context, or explanation that were not in the original.\n"
+        "8. If the transcript is already clean, return it unchanged.\n"
+        "9. Return only the cleaned text — no preamble, no quotes, no explanation.\n\n"
         f"TRANSCRIPT:\n{raw}"
     )
     response = _client.chat.completions.create(
