@@ -14,7 +14,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<number | null>(null)
   const [evaluation, setEvaluation] = useState<Partial<AnswerEvaluation>>({})
   const [streaming, setStreaming] = useState(false)
-  const [rawTranscript, setRawTranscript] = useState('')
+  const [networkError, setNetworkError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
 
   const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
@@ -48,39 +48,53 @@ export default function App() {
   }
 
   async function startSession() {
-    const id = await createSession()
-    setSessionId(id)
-    setQIndex(0)
-    setView('session')
+    setNetworkError(null)
+    try {
+      const id = await createSession()
+      setSessionId(id)
+      setQIndex(0)
+      setView('session')
+    } catch (err) {
+      setNetworkError(err instanceof Error ? err.message : 'Could not start session.')
+    }
   }
 
   async function submitAnswer() {
     if (!transcript || sessionId === null) return
     const question = questions[qIndex]
-    setRawTranscript(transcript)
+    // Capture raw transcript immediately — state update is batched and
+    // rawTranscript from state would still be stale when saveAnswer runs.
+    const raw = transcript
     stop()
+    setNetworkError(null)
 
-    const clean = await cleanTranscript(transcript)
-    setEvaluation({})
-    setStreaming(true)
+    try {
+      const clean = await cleanTranscript(raw)
+      setEvaluation({})
+      setStreaming(true)
 
-    const accumulated: Partial<AnswerEvaluation> = {}
-    for await (const chunk of streamEvaluation(question.text, clean)) {
-      Object.assign(accumulated, chunk)
-      setEvaluation({ ...accumulated })
+      const accumulated: Partial<AnswerEvaluation> = {}
+      for await (const chunk of streamEvaluation(question.text, clean)) {
+        Object.assign(accumulated, chunk)
+        setEvaluation({ ...accumulated })
+      }
+      setStreaming(false)
+
+      await saveAnswer({
+        session_id: sessionId,
+        question: question.text,
+        transcript_raw: raw,
+        transcript_clean: clean,
+        evaluation_json: JSON.stringify(accumulated),
+      })
+    } catch (err) {
+      setStreaming(false)
+      setNetworkError(err instanceof Error ? err.message : 'Something went wrong.')
     }
-    setStreaming(false)
-
-    await saveAnswer({
-      session_id: sessionId,
-      question: question.text,
-      transcript_raw: rawTranscript,
-      transcript_clean: clean,
-      evaluation_json: JSON.stringify(accumulated),
-    })
   }
 
   function nextQuestion() {
+    setNetworkError(null)
     if (qIndex + 1 >= questions.length) {
       setView('done')
     } else {
@@ -109,6 +123,9 @@ export default function App() {
               )}
               {questions.length > 0 && (
                 <p className="text-sm text-green-600">{questions.length} questions loaded</p>
+              )}
+              {networkError && (
+                <p className="text-sm text-red-600">{networkError}</p>
               )}
               <button
                 onClick={startSession}
@@ -158,9 +175,9 @@ export default function App() {
           <p className="text-gray-900 font-medium">{currentQuestion.text}</p>
         </div>
 
-        {speechError && (
+        {(speechError || networkError) && (
           <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
-            {speechError}
+            {speechError ?? networkError}
           </p>
         )}
 
