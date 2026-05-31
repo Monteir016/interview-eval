@@ -40,3 +40,24 @@ export interface QuestionSet {
   role: string
   questions: Question[]
 }
+
+export interface SessionListItem {
+  id: number
+  created_at: string
+  question_set: string | null
+  avg_overall: number | null
+  answer_count: number
+}
+
+export interface AnswerHistoryItem {
+  id: number
+  session_id: number
+  question: string
+  specificity: number
+  evidence: number
+  relevance: number
+  structure: number
+  overall_score: number
+  evaluation: Partial<AnswerEvaluation>
+  created_at: string
+}

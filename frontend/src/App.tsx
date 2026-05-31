@@ -3,9 +3,11 @@ import type { AnswerEvaluation, Question, QuestionSet, SessionSummary } from './
 import { useSpeech } from './hooks/useSpeech'
 import { RecordButton } from './components/RecordButton'
 import { EvaluationCard } from './components/EvaluationCard'
+import { HistoryView } from './components/HistoryView'
+import { SessionDetail } from './components/SessionDetail'
 import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions } from './api/client'
 
-type View = 'setup' | 'session' | 'done'
+type View = 'setup' | 'session' | 'done' | 'history'
 
 export default function App() {
   const [view, setView] = useState<View>('setup')
@@ -23,6 +25,7 @@ export default function App() {
   const [generatedSet, setGeneratedSet] = useState<QuestionSet | null>(null)
   const [jdUrl, setJdUrl] = useState('')
   const [generating, setGenerating] = useState(false)
+  const [selectedSessionId, setSelectedSessionId] = useState<number | null>(null)
 
   const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
 
@@ -159,11 +162,26 @@ export default function App() {
     }
   }
 
+  if (view === 'history') {
+    if (selectedSessionId !== null) {
+      return <SessionDetail sessionId={selectedSessionId} onBack={() => setSelectedSessionId(null)} />
+    }
+    return <HistoryView onBack={() => setView('setup')} onSelectSession={setSelectedSessionId} />
+  }
+
   if (view === 'setup') {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center p-6">
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 w-full max-w-md space-y-6">
-          <h1 className="text-2xl font-bold text-gray-900">Prepwise</h1>
+          <div className="flex items-center justify-between">
+            <h1 className="text-2xl font-bold text-gray-900">Prepwise</h1>
+            <button
+              onClick={() => { setSelectedSessionId(null); setView('history') }}
+              className="text-sm text-gray-400 hover:text-gray-700"
+            >
+              History
+            </button>
+          </div>
           {!supported ? (
             <div className="rounded-lg bg-red-50 border border-red-200 p-4 text-sm text-red-700">
               <p className="font-semibold mb-1">Browser not supported</p>

@@ -117,3 +117,36 @@ export async function generateQuestions(
   )
   return res.json()
 }
+
+export async function listSessions(): Promise<import('../types').SessionListItem[]> {
+  const res = await checkOk(await fetch(`${BASE}/sessions`), 'listSessions')
+  return res.json()
+}
+
+export async function getSessionAnswers(
+  session_id: number
+): Promise<import('../types').AnswerHistoryItem[]> {
+  const res = await checkOk(
+    await fetch(`${BASE}/sessions/${session_id}/answers`),
+    'getSessionAnswers'
+  )
+  const rows: Array<Record<string, unknown>> = await res.json()
+  return rows.map((r) => {
+    let evaluation: Partial<import('../types').AnswerEvaluation> = {}
+    try {
+      if (typeof r.evaluation_json === 'string') evaluation = JSON.parse(r.evaluation_json)
+    } catch { /* ignore */ }
+    return {
+      id: r.id as number,
+      session_id: r.session_id as number,
+      question: r.question as string,
+      specificity: r.specificity as number,
+      evidence: r.evidence as number,
+      relevance: r.relevance as number,
+      structure: r.structure as number,
+      overall_score: r.overall_score as number,
+      evaluation,
+      created_at: r.created_at as string,
+    }
+  })
+}

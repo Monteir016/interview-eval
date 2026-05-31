@@ -52,7 +52,15 @@ async def save_answer(body: AnswerCreate, db: aiosqlite.Connection = Depends(get
 
 @router.get("")
 async def list_sessions(db: aiosqlite.Connection = Depends(get_db)) -> list[dict]:
-    cursor = await db.execute("SELECT * FROM sessions ORDER BY created_at DESC")
+    cursor = await db.execute(
+        """SELECT s.id, s.created_at, s.question_set,
+                  ROUND(AVG(a.overall_score), 2) AS avg_overall,
+                  COUNT(a.id) AS answer_count
+           FROM sessions s
+           LEFT JOIN answers a ON a.session_id = s.id
+           GROUP BY s.id
+           ORDER BY s.created_at DESC"""
+    )
     return await cursor.fetchall()
 
 
