@@ -1,9 +1,9 @@
 import { useState } from 'react'
-import type { AnswerEvaluation, Question, SessionSummary } from './types'
+import type { AnswerEvaluation, Question, QuestionSet, SessionSummary } from './types'
 import { useSpeech } from './hooks/useSpeech'
 import { RecordButton } from './components/RecordButton'
 import { EvaluationCard } from './components/EvaluationCard'
-import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary } from './api/client'
+import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions } from './api/client'
 
 type View = 'setup' | 'session' | 'done'
 
@@ -20,6 +20,9 @@ export default function App() {
   const [summaryLoading, setSummaryLoading] = useState(false)
   const [networkError, setNetworkError] = useState<string | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
+  const [generatedSet, setGeneratedSet] = useState<QuestionSet | null>(null)
+  const [jdUrl, setJdUrl] = useState('')
+  const [generating, setGenerating] = useState(false)
 
   const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
 
@@ -45,10 +48,45 @@ export default function App() {
         throw new Error('Each question needs `text`, `category`, and `target_experience` strings.')
       }
       setQuestions(list)
+      setGeneratedSet(null)
     } catch (err) {
       setQuestions([])
+      setGeneratedSet(null)
       setLoadError(err instanceof Error ? err.message : 'Could not parse JSON.')
     }
+  }
+
+  async function generateFromJd() {
+    const url = jdUrl.trim()
+    if (!url) return
+    setLoadError(null)
+    setGenerating(true)
+    try {
+      const set = await generateQuestions(url)
+      if (!set.questions?.length) throw new Error('No questions returned.')
+      setGeneratedSet(set)
+      setQuestions(set.questions)
+    } catch (err) {
+      setQuestions([])
+      setGeneratedSet(null)
+      setLoadError(err instanceof Error ? err.message : 'Could not generate questions.')
+    } finally {
+      setGenerating(false)
+    }
+  }
+
+  function downloadGeneratedSet() {
+    if (!generatedSet) return
+    const blob = new Blob([JSON.stringify(generatedSet, null, 2)], { type: 'application/json' })
+    const href = URL.createObjectURL(blob)
+    const filename = `${generatedSet.company}-${generatedSet.role}`
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, '_') + '.json'
+    const a = document.createElement('a')
+    a.href = href
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(href)
   }
 
   async function startSession() {
@@ -133,20 +171,59 @@ export default function App() {
             </div>
           ) : (
             <>
-              <p className="text-gray-500 text-sm">Load a question set JSON to begin.</p>
+              <p className="text-gray-500 text-sm">Load a question set JSON or generate one from a JD URL.</p>
               <input type="file" accept=".json" onChange={loadQuestions} className="text-sm" />
+
+              <div className="flex items-center gap-3 text-xs text-gray-400">
+                <span className="h-px bg-gray-200 flex-1" />
+                OR
+                <span className="h-px bg-gray-200 flex-1" />
+              </div>
+
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-700">Generate from JD URL</label>
+                <input
+                  type="url"
+                  value={jdUrl}
+                  onChange={(e) => setJdUrl(e.target.value)}
+                  placeholder="https://boards.greenhouse.io/…"
+                  disabled={generating}
+                  className="w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none disabled:bg-gray-50"
+                />
+                <button
+                  onClick={generateFromJd}
+                  disabled={generating || !jdUrl.trim()}
+                  className="w-full rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2 text-sm font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
+                >
+                  {generating ? 'Generating (20-40s)…' : 'Generate questions'}
+                </button>
+              </div>
+
               {loadError && (
                 <p className="text-sm text-red-600">{loadError}</p>
               )}
               {questions.length > 0 && (
-                <p className="text-sm text-green-600">{questions.length} questions loaded</p>
+                <div className="space-y-2">
+                  <p className="text-sm text-green-600">
+                    {questions.length} questions loaded
+                    {generatedSet && <> — <span className="text-gray-500">{generatedSet.company} / {generatedSet.role}</span></>}
+                  </p>
+                  {generatedSet && (
+                    <button
+                      onClick={downloadGeneratedSet}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                    >
+                      Download JSON
+                    </button>
+                  )}
+                </div>
               )}
               {networkError && (
                 <p className="text-sm text-red-600">{networkError}</p>
               )}
               <button
                 onClick={startSession}
-                disabled={questions.length === 0}
+                disabled={questions.length === 0 || generating}
                 className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40"
               >
                 Start session

@@ -103,3 +103,17 @@ export async function fetchSessionSummary(
   )
   return res.json()
 }
+
+export async function generateQuestions(
+  jd_url: string
+): Promise<import('../types').QuestionSet> {
+  const res = await checkOk(
+    await fetch(`${BASE}/questions/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jd_url }),
+    }),
+    'generateQuestions'
+  )
+  return res.json()
+}

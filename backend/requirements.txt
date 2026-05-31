@@ -7,5 +7,6 @@ pydantic-settings
 python-dotenv
 aiosqlite
 httpx
+tavily-python
 pytest
 pytest-asyncio
