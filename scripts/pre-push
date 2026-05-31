@@ -1,0 +1,22 @@
+#!/bin/sh
+# Pre-push hook: run the full test suite including live LLM tests.
+# Set SKIP_LIVE_TESTS=1 to bypass live tests when offline.
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT/backend" || exit 1
+
+if [ ! -f ".venv/bin/activate" ]; then
+    echo "ERROR: backend/.venv not found — run 'make install' first"
+    exit 1
+fi
+
+# shellcheck disable=SC1091
+. .venv/bin/activate
+
+if [ "${SKIP_LIVE_TESTS:-0}" = "1" ]; then
+    echo "[pre-push] SKIP_LIVE_TESTS=1 — running offline tests only"
+    pytest -q
+else
+    echo "[pre-push] running full test suite (--live)"
+    pytest -q --live
+fi

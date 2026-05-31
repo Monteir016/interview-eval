@@ -54,33 +54,39 @@ def rag():
     return svc
 
 
+@pytest.mark.live
 def test_index_produces_chunks(rag):
     assert rag.count > 0
 
 
+@pytest.mark.live
 def test_index_is_idempotent(rag):
     before = rag.count
     rag.index()
     assert rag.count == before
 
 
+@pytest.mark.live
 def test_query_returns_k_results(rag):
     results = rag.query("IST computer science degree", k=3)
     assert len(results) == 3
 
 
+@pytest.mark.live
 def test_query_education_section(rag):
     results = rag.query("university degree IST Lisbon", k=5)
     combined = " ".join(results).lower()
     assert "ist" in combined or "instituto" in combined
 
 
+@pytest.mark.live
 def test_query_lazzo_experience(rag):
     results = rag.query("co-founder startup Flutter mobile app", k=5)
     combined = " ".join(results).lower()
     assert "lazzo" in combined or "flutter" in combined
 
 
+@pytest.mark.live
 def test_query_react_native_returns_lazzo_stack(rag):
     """ROADMAP manual check: 'react native frontend' should surface Lazzo's
     Flutter stack, not unrelated coursework."""
@@ -89,6 +95,7 @@ def test_query_react_native_returns_lazzo_stack(rag):
     assert "lazzo" in combined or "flutter" in combined or "next.js" in combined
 
 
+@pytest.mark.live
 def test_query_returns_strings(rag):
     results = rag.query("any query")
     assert all(isinstance(r, str) for r in results)
