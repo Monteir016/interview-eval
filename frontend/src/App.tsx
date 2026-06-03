@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { AnswerEvaluation, Question, QuestionSet, SessionSummary } from './types'
 import { useSpeech } from './hooks/useSpeech'
 import { EvaluationCard } from './components/EvaluationCard'
@@ -9,6 +9,15 @@ import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSess
 type View = 'setup' | 'session' | 'done' | 'history'
 
 const GENERATING_STEPS = ['Fetching job description…', 'Researching company…', 'Crafting questions…']
+
+function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
+  return (
+    <svg className={`animate-spin shrink-0 ${className}`} xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+    </svg>
+  )
+}
 
 export default function App() {
   const [view, setView] = useState<View>('setup')
@@ -47,6 +56,10 @@ export default function App() {
   const [manualTranscript, setManualTranscript] = useState<string | null>(null)
   const [editingAnswerIndex, setEditingAnswerIndex] = useState<number | null>(null)
   const [editAnswerValue, setEditAnswerValue] = useState('')
+  const [cleaning, setCleaning] = useState(false)
+  const [startingSession, setStartingSession] = useState(false)
+  const pendingCleanRef = useRef(false)
+  const rawTranscriptRef = useRef('')
 
   useEffect(() => {
     if (!generating) return
@@ -54,7 +67,25 @@ export default function App() {
     return () => clearInterval(id)
   }, [generating])
 
-  const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech()
+  // Fires when the user stops recording. Only the explicit Stop button arms
+  // pendingCleanRef — stop() calls from evaluate/submit/skip are ignored here.
+  const handleRecordingStopped = useCallback(async (finalTranscript: string) => {
+    if (!pendingCleanRef.current) return
+    pendingCleanRef.current = false
+    const raw = finalTranscript.trim()
+    if (!raw) return
+    rawTranscriptRef.current = raw
+    setCleaning(true)
+    try {
+      setManualTranscript(await cleanTranscript(raw))
+    } catch {
+      setManualTranscript(raw)
+    } finally {
+      setCleaning(false)
+    }
+  }, [])
+
+  const { transcript, isListening, start, stop, reset, supported, error: speechError } = useSpeech({ onStop: handleRecordingStopped })
   const effectiveTranscript = manualTranscript ?? transcript
 
   useEffect(() => {
@@ -74,6 +105,7 @@ export default function App() {
   function handleStartRecording() {
     reset()
     setManualTranscript(null)
+    pendingCleanRef.current = false
     setEditingTranscript(false)
     setRecordElapsed(0)
     recordStartedAtRef.current = Date.now()
@@ -83,10 +115,22 @@ export default function App() {
   function handleRestartRecording() {
     reset()
     setManualTranscript(null)
+    pendingCleanRef.current = false
     setEditingTranscript(false)
     setRecordElapsed(0)
     recordStartedAtRef.current = Date.now()
     start()
+  }
+
+  function handleStopRecording() {
+    pendingCleanRef.current = true
+    stop()
+  }
+
+  function autoGrow(el: HTMLTextAreaElement | null) {
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
   }
 
   function handleSkipQuestion() {
@@ -188,6 +232,7 @@ export default function App() {
 
   async function startSession() {
     setNetworkError(null)
+    setStartingSession(true)
     try {
       const id = await createSession()
       const autoName = `Session #${id}`
@@ -198,6 +243,8 @@ export default function App() {
       setView('session')
     } catch (err) {
       setNetworkError(err instanceof Error ? err.message : 'Could not start session.')
+    } finally {
+      setStartingSession(false)
     }
   }
 
@@ -219,14 +266,22 @@ export default function App() {
   async function evaluateAnswer() {
     if (!effectiveTranscript || sessionId === null) return
     const question = questions[qIndex]
-    const raw = effectiveTranscript
-    stop()
     setNetworkError(null)
+    // Show the loading card immediately so a single click gives feedback even
+    // before the (possibly slow) network round-trips start.
+    setEvaluation({})
+    setStreaming(true)
 
     try {
-      const clean = await cleanTranscript(raw)
-      setEvaluation({})
-      setStreaming(true)
+      // effectiveTranscript is already cleaned on stop (and may include the user's
+      // manual edits), so use it as-is rather than re-cleaning over their edits.
+      let clean = effectiveTranscript
+      let raw = rawTranscriptRef.current || effectiveTranscript
+      if (isListening) {
+        stop()
+        raw = transcript
+        clean = await cleanTranscript(raw)
+      }
 
       const accumulated: Partial<AnswerEvaluation> = {}
       for await (const chunk of streamEvaluation(question.text, clean)) {
@@ -256,17 +311,18 @@ export default function App() {
   async function submitWithoutEval() {
     if (!effectiveTranscript || sessionId === null) return
     const question = questions[qIndex]
-    const raw = effectiveTranscript
+    const clean = effectiveTranscript
+    const rawOriginal = rawTranscriptRef.current || effectiveTranscript
     if (isListening) stop()
     setSubmitting(true)
     setNetworkError(null)
-    setAnswersLog(prev => [...prev, { question: question.text, transcript: raw, evaluated: false }])
+    setAnswersLog(prev => [...prev, { question: question.text, transcript: clean, evaluated: false }])
     try {
       await saveAnswer({
         session_id: sessionId,
         question: question.text,
-        transcript_raw: raw,
-        transcript_clean: raw,
+        transcript_raw: rawOriginal,
+        transcript_clean: clean,
         evaluation_json: null,
       })
     } catch (err) {
@@ -429,10 +485,10 @@ export default function App() {
                 {networkError && <p className="text-sm text-red-600">{networkError}</p>}
                 <button
                   onClick={submitManual}
-                  disabled={!manualText.trim() || manualLineCount > 10}
-                  className="w-full rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
+                  disabled={!manualText.trim() || manualLineCount > 10 || startingSession}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 disabled:opacity-40 transition-colors"
                 >
-                  Start session
+                  {startingSession ? (<><Spinner /> Starting…</>) : 'Start session'}
                 </button>
               </div>
             ) : (
@@ -521,9 +577,10 @@ export default function App() {
                     <div className="flex items-center gap-3">
                       <button
                         onClick={startSession}
-                        className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors"
+                        disabled={startingSession}
+                        className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        Start session
+                        {startingSession ? (<><Spinner /> Starting…</>) : 'Start session'}
                       </button>
                       <button
                         onClick={downloadGeneratedSet}
@@ -674,11 +731,12 @@ export default function App() {
                     {editingAnswerIndex === i ? (
                       <div className="mt-1 space-y-1">
                         <textarea
+                          ref={autoGrow}
                           value={editAnswerValue}
-                          onChange={e => setEditAnswerValue(e.target.value)}
-                          rows={3}
+                          onChange={e => { setEditAnswerValue(e.target.value); autoGrow(e.currentTarget) }}
+                          rows={6}
                           autoFocus
-                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+                          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-y min-h-[8rem] max-h-[28rem] overflow-y-auto"
                         />
                         <div className="flex gap-2">
                           <button
@@ -733,7 +791,7 @@ export default function App() {
   const currentQuestion = questions[qIndex]
   const hasStarted = isListening || effectiveTranscript.length > 0
   const evalDone = evaluation.overall_score !== undefined && !streaming
-  const showActions = effectiveTranscript && !streaming && !evalDone && !submitting && !editingTranscript
+  const showActions = effectiveTranscript && !streaming && !evalDone && !editingTranscript && !cleaning
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -779,8 +837,8 @@ export default function App() {
 
             {/* Record / Stop (main, bigger) */}
             <button
-              onClick={isListening ? stop : handleStartRecording}
-              disabled={!supported || streaming || submitting}
+              onClick={isListening ? handleStopRecording : handleStartRecording}
+              disabled={!supported || streaming || submitting || cleaning}
               aria-label={isListening ? 'Stop recording' : 'Start recording'}
               title={isListening ? 'Stop recording' : 'Start recording'}
               className={`w-20 h-20 rounded-full flex items-center justify-center text-white shadow-md transition-colors disabled:opacity-40 ${
@@ -824,7 +882,11 @@ export default function App() {
 
           <span className="text-sm text-gray-500 tabular-nums">{formatTime(recordElapsed)}</span>
 
-          {effectiveTranscript && showTranscript && !editingTranscript && (
+          {cleaning && (
+            <p className="text-sm text-indigo-500 animate-pulse">Polishing transcript…</p>
+          )}
+
+          {effectiveTranscript && showTranscript && !editingTranscript && !cleaning && (
             <p className="text-sm text-gray-500 text-center max-w-lg animate-fade-in-up">{effectiveTranscript}</p>
           )}
         </div>
@@ -833,10 +895,11 @@ export default function App() {
         {editingTranscript && effectiveTranscript && (
           <div className="space-y-2">
             <textarea
+              ref={autoGrow}
               value={editTranscriptValue}
-              onChange={e => setEditTranscriptValue(e.target.value)}
-              rows={4}
-              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-none"
+              onChange={e => { setEditTranscriptValue(e.target.value); autoGrow(e.currentTarget) }}
+              rows={6}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400 resize-y min-h-[8rem] max-h-[28rem] overflow-y-auto"
               autoFocus
             />
             <div className="flex gap-2">
@@ -860,22 +923,25 @@ export default function App() {
           <div className="flex items-center gap-3">
             <button
               onClick={submitWithoutEval}
-              className="flex-1 rounded-lg border border-gray-200 bg-white px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              disabled={submitting}
+              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Submit
+              {submitting ? (<><Spinner /> Submitting…</>) : 'Submit'}
             </button>
             <button
               onClick={evaluateAnswer}
-              className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors"
+              disabled={submitting}
+              className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
               Evaluate
             </button>
             {/* Edit transcript */}
             <button
               onClick={() => { setEditTranscriptValue(effectiveTranscript); setEditingTranscript(true); setShowTranscript(false) }}
+              disabled={submitting}
               aria-label="Edit transcript"
               title="Edit transcript"
-              className="w-12 h-12 rounded-lg border border-gray-200 bg-white text-gray-400 flex items-center justify-center hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-colors shrink-0"
+              className="w-12 h-12 rounded-lg border border-gray-200 bg-white text-gray-400 flex items-center justify-center hover:text-indigo-600 hover:border-indigo-200 hover:bg-indigo-50 transition-colors shrink-0 disabled:opacity-60 disabled:cursor-not-allowed"
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-4 h-4">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />

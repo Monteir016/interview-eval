@@ -19,11 +19,24 @@ const ERROR_MESSAGES: Record<string, string> = {
   'no-speech': '',
 }
 
-export function useSpeech(): UseSpeechReturn {
+interface UseSpeechOptions {
+  // Called once when the user explicitly stops recording (not on restart/abort),
+  // with the final accumulated transcript — including the last chunk that may not
+  // yet be reflected in the `transcript` state.
+  onStop?: (finalTranscript: string) => void
+}
+
+export function useSpeech(options: UseSpeechOptions = {}): UseSpeechReturn {
   const [transcript, setTranscript] = useState('')
   const [isListening, setIsListening] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
+  const latestTranscriptRef = useRef('')
+  const stoppedByUserRef = useRef(false)
+  const onStopRef = useRef(options.onStop)
+  useEffect(() => {
+    onStopRef.current = options.onStop
+  }, [options.onStop])
 
   const supported =
     typeof window !== 'undefined' &&
@@ -59,15 +72,24 @@ export function useSpeech(): UseSpeechReturn {
     rec.continuous = true
     rec.interimResults = true
     rec.lang = 'en-US'
+    latestTranscriptRef.current = ''
+    stoppedByUserRef.current = false
     rec.onresult = (e) => {
       let full = ''
       for (let i = 0; i < e.results.length; i++) {
         full += e.results[i][0].transcript
       }
+      latestTranscriptRef.current = full
       setTranscript(full)
     }
     rec.onstart = () => setIsListening(true)
-    rec.onend = () => setIsListening(false)
+    rec.onend = () => {
+      setIsListening(false)
+      if (stoppedByUserRef.current) {
+        stoppedByUserRef.current = false
+        onStopRef.current?.(latestTranscriptRef.current)
+      }
+    }
     rec.onerror = (e: SpeechRecognitionErrorEvent) => {
       const message = ERROR_MESSAGES[e.error]
       if (message === undefined) {
@@ -88,6 +110,7 @@ export function useSpeech(): UseSpeechReturn {
   }, [supported])
 
   const stop = useCallback(() => {
+    stoppedByUserRef.current = true
     recognitionRef.current?.stop()
   }, [])
 
