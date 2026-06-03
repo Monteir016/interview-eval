@@ -4,7 +4,7 @@ import { useSpeech } from './hooks/useSpeech'
 import { EvaluationCard } from './components/EvaluationCard'
 import { HistoryView } from './components/HistoryView'
 import { SessionDetail } from './components/SessionDetail'
-import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions, patchSession } from './api/client'
+import { cleanTranscript, streamEvaluation, createSession, saveAnswer, fetchSessionSummary, generateQuestions, patchSession, deleteSession } from './api/client'
 
 type View = 'setup' | 'session' | 'done' | 'history'
 
@@ -58,8 +58,15 @@ export default function App() {
   const [editAnswerValue, setEditAnswerValue] = useState('')
   const [cleaning, setCleaning] = useState(false)
   const [startingSession, setStartingSession] = useState(false)
+  const [scoreAnswers, setScoreAnswers] = useState(() => localStorage.getItem('prepwise.scoreAnswers') === '1')
+  const [showExitConfirm, setShowExitConfirm] = useState(false)
+  const [exiting, setExiting] = useState(false)
   const pendingCleanRef = useRef(false)
   const rawTranscriptRef = useRef('')
+
+  useEffect(() => {
+    localStorage.setItem('prepwise.scoreAnswers', scoreAnswers ? '1' : '0')
+  }, [scoreAnswers])
 
   useEffect(() => {
     if (!generating) return
@@ -125,6 +132,42 @@ export default function App() {
   function handleStopRecording() {
     pendingCleanRef.current = true
     stop()
+  }
+
+  function resetToSetup() {
+    setView('setup')
+    setSetupStep('choose')
+    setManualText('')
+    setJdUrl('')
+    setQuestions([])
+    setQIndex(0)
+    setSessionId(null)
+    setEvaluation({})
+    setEvaluationsList([])
+    setAnswersLog([])
+    setSummary(null)
+    setManualTranscript(null)
+    setLoadError(null)
+    setNetworkError(null)
+    setRecordElapsed(0)
+    setSessionName('')
+    setEditingAnswerIndex(null)
+    setStreaming(false)
+    setSubmitting(false)
+    pendingCleanRef.current = false
+    rawTranscriptRef.current = ''
+    reset()
+  }
+
+  async function confirmExit() {
+    setExiting(true)
+    const id = sessionId
+    if (id !== null) {
+      try { await deleteSession(id) } catch { /* best effort — discard anyway */ }
+    }
+    setExiting(false)
+    setShowExitConfirm(false)
+    resetToSetup()
   }
 
   function autoGrow(el: HTMLTextAreaElement | null) {
@@ -250,7 +293,7 @@ export default function App() {
 
   async function finishSession() {
     setView('done')
-    if (evaluationsList.length === 0) return
+    if (!scoreAnswers || evaluationsList.length === 0) return
     setNetworkError(null)
     setSummaryLoading(true)
     try {
@@ -427,6 +470,22 @@ export default function App() {
                     <span className="block text-xs text-gray-500 mt-0.5">From a JD URL, tailored to you.</span>
                   </span>
                 </button>
+
+                <div className="border-t border-gray-100 pt-4 flex items-start justify-between gap-4">
+                  <span className="flex-1">
+                    <span className="block text-sm font-medium text-gray-900">Score answers with AI</span>
+                    <span className="block text-xs text-gray-500 mt-0.5">Adds per-answer feedback and a session summary.</span>
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={scoreAnswers}
+                    onClick={() => setScoreAnswers(v => !v)}
+                    className={`relative shrink-0 mt-0.5 inline-flex h-6 w-11 items-center rounded-full transition-colors ${scoreAnswers ? 'bg-indigo-600' : 'bg-gray-300'}`}
+                  >
+                    <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${scoreAnswers ? 'translate-x-5' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
               </div>
             ) : setupStep === 'manual' ? (
               <div key="manual" className="animate-fade-in-up space-y-4">
@@ -778,7 +837,7 @@ export default function App() {
           )}
 
           <button
-            onClick={() => { setView('setup'); setSetupStep('choose'); setManualText(''); setJdUrl(''); setQuestions([]); setEvaluationsList([]); setAnswersLog([]); setSummary(null); setLoadError(null); setNetworkError(null); setRecordElapsed(0); setSessionName(''); setEditingAnswerIndex(null); reset() }}
+            onClick={resetToSetup}
             className="w-full rounded-lg border border-gray-200 px-4 py-3 text-sm hover:bg-gray-50"
           >
             New session
@@ -797,7 +856,19 @@ export default function App() {
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-2xl mx-auto space-y-10">
         <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">Prepwise</h1>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowExitConfirm(true)}
+              aria-label="Exit session"
+              title="Exit session"
+              className="-ml-1 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth="1.8" stroke="currentColor" className="w-5 h-5">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+            <h1 className="text-lg font-bold text-gray-900">Prepwise</h1>
+          </div>
           <span className="text-sm text-gray-400">{qIndex + 1} / {questions.length}</span>
         </div>
 
@@ -924,17 +995,27 @@ export default function App() {
             <button
               onClick={submitWithoutEval}
               disabled={submitting}
-              className="flex-1 flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-4 py-3 font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              className={`flex-1 flex items-center justify-center gap-2 rounded-lg px-4 py-3 font-medium transition-colors disabled:opacity-60 disabled:cursor-not-allowed ${
+                scoreAnswers
+                  ? 'border border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
+                  : 'bg-indigo-600 font-semibold text-white hover:bg-indigo-700'
+              }`}
             >
-              {submitting ? (<><Spinner /> Submitting…</>) : 'Submit'}
+              {submitting
+                ? (<><Spinner /> Saving…</>)
+                : scoreAnswers
+                  ? 'Submit'
+                  : qIndex + 1 >= questions.length ? 'Save' : 'Next →'}
             </button>
-            <button
-              onClick={evaluateAnswer}
-              disabled={submitting}
-              className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-            >
-              Evaluate
-            </button>
+            {scoreAnswers && (
+              <button
+                onClick={evaluateAnswer}
+                disabled={submitting}
+                className="flex-1 rounded-lg bg-indigo-600 px-4 py-3 font-semibold text-white hover:bg-indigo-700 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+              >
+                Evaluate
+              </button>
+            )}
             {/* Edit transcript */}
             <button
               onClick={() => { setEditTranscriptValue(effectiveTranscript); setEditingTranscript(true); setShowTranscript(false) }}
@@ -964,6 +1045,35 @@ export default function App() {
           </button>
         )}
       </div>
+
+      {showExitConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 animate-fade-in-up">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-6 shadow-xl space-y-5">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">Exit session?</h2>
+              <p className="text-sm text-gray-500 mt-1">
+                This session and its answers won't be saved. This can't be undone.
+              </p>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowExitConfirm(false)}
+                disabled={exiting}
+                className="flex-1 rounded-lg border border-gray-200 bg-white px-4 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors disabled:opacity-60"
+              >
+                Keep going
+              </button>
+              <button
+                onClick={confirmExit}
+                disabled={exiting}
+                className="flex-1 flex items-center justify-center gap-2 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-red-700 transition-colors disabled:opacity-60"
+              >
+                {exiting ? (<><Spinner /> Exiting…</>) : 'Exit without saving'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
