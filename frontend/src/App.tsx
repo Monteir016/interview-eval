@@ -19,6 +19,88 @@ function Spinner({ className = 'h-4 w-4' }: { className?: string }) {
   )
 }
 
+// Prefer a modern, natural-sounding English voice over the robotic browser default.
+// Ranked by quality; first match wins. Falls back to any en voice, then the default.
+const VOICE_PREFERENCES = [
+  'Google US English',
+  'Microsoft Aria',
+  'Microsoft Jenny',
+  'Samantha',
+  'Ava',
+  'Allison',
+  'Zoe',
+  'Google UK English Female',
+]
+
+function pickNaturalVoice(): SpeechSynthesisVoice | null {
+  const voices = window.speechSynthesis.getVoices()
+  if (voices.length === 0) return null
+  for (const pref of VOICE_PREFERENCES) {
+    const match = voices.find((v) => v.name.toLowerCase().includes(pref.toLowerCase()))
+    if (match) return match
+  }
+  const natural = voices.find((v) => /en/i.test(v.lang) && /natural|neural|enhanced|premium/i.test(v.name))
+  if (natural) return natural
+  return voices.find((v) => /^en[-_]us/i.test(v.lang)) ?? voices.find((v) => /^en/i.test(v.lang)) ?? null
+}
+
+function SpeakButton({ text }: { text: string }) {
+  const [speaking, setSpeaking] = useState(false)
+  const supported = typeof window !== 'undefined' && 'speechSynthesis' in window
+
+  // Voices load asynchronously; trigger a load so getVoices() is populated by click time.
+  useEffect(() => {
+    if (!supported) return
+    window.speechSynthesis.getVoices()
+    const onChange = () => window.speechSynthesis.getVoices()
+    window.speechSynthesis.addEventListener('voiceschanged', onChange)
+    return () => window.speechSynthesis.removeEventListener('voiceschanged', onChange)
+  }, [supported])
+
+  // Cancel any in-flight speech when this card unmounts (e.g. advancing questions).
+  useEffect(() => {
+    return () => {
+      if (supported) window.speechSynthesis.cancel()
+    }
+  }, [supported])
+
+  if (!supported) return null
+
+  const toggle = () => {
+    if (speaking) {
+      window.speechSynthesis.cancel()
+      setSpeaking(false)
+      return
+    }
+    window.speechSynthesis.cancel()
+    const utter = new SpeechSynthesisUtterance(text)
+    const voice = pickNaturalVoice()
+    if (voice) utter.voice = voice
+    utter.lang = voice?.lang ?? 'en-US'
+    utter.rate = 0.95
+    utter.pitch = 1
+    utter.onend = () => setSpeaking(false)
+    utter.onerror = () => setSpeaking(false)
+    setSpeaking(true)
+    window.speechSynthesis.speak(utter)
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      aria-label={speaking ? 'Stop reading question' : 'Read question aloud'}
+      title={speaking ? 'Stop' : 'Read aloud'}
+      className={`shrink-0 rounded-lg p-2 transition-colors ${speaking ? 'text-indigo-600 bg-indigo-50' : 'text-gray-400 hover:text-indigo-600 hover:bg-gray-50'}`}
+    >
+      <svg className="h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.8}>
+        <path strokeLinecap="round" strokeLinejoin="round" d="M11 5 6 9H2v6h4l5 4V5z" />
+        <path strokeLinecap="round" strokeLinejoin="round" d="M15.5 8.5a5 5 0 010 7M18 6a8 8 0 010 12" />
+      </svg>
+    </button>
+  )
+}
+
 export default function App() {
   const [view, setView] = useState<View>('setup')
   const [questions, setQuestions] = useState<Question[]>([])
@@ -872,11 +954,14 @@ export default function App() {
           <span className="text-sm text-gray-400">{qIndex + 1} / {questions.length}</span>
         </div>
 
-        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-          <p className="text-xs font-medium text-indigo-500 uppercase tracking-wide mb-2">
-            {currentQuestion.category}
-          </p>
-          <p className="text-gray-900 font-medium">{currentQuestion.text}</p>
+        <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <p className="text-xs font-medium text-indigo-500 uppercase tracking-wide mb-2">
+              {currentQuestion.category}
+            </p>
+            <p className="text-gray-900 font-medium">{currentQuestion.text}</p>
+          </div>
+          <SpeakButton key={currentQuestion.text} text={currentQuestion.text} />
         </div>
 
         {(speechError || networkError) && (
@@ -1005,7 +1090,7 @@ export default function App() {
                 ? (<><Spinner /> Saving…</>)
                 : scoreAnswers
                   ? 'Submit'
-                  : qIndex + 1 >= questions.length ? 'Save' : 'Next →'}
+                  : qIndex + 1 >= questions.length ? 'Save' : 'Next'}
             </button>
             {scoreAnswers && (
               <button
